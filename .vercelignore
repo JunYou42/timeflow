@@ -1,0 +1,5 @@
+# Keep local secrets and build output out of the deployment upload.
+.env*.local
+.next
+*.tsbuildinfo
+node_modules
