@@ -20,26 +20,35 @@ const STROKE_WIDTH = 9;
 const SECTOR_GAP = 3;
 
 /**
- * Lay a ring out as one dash per value, positioned by the running total.
+ * Lay a ring out as one dash per value, each positioned by the running total of
+ * `offsets` rather than of `values`.
+ *
+ * Sharing the plan's offsets is what keeps the tracked ring honest: a project's
+ * solid sector starts where its light plan sector starts, so it can never be
+ * drawn wider than the plan it is measured against.
  *
  * Drawing sectors as dashes on a circle rather than as arc paths keeps a
  * single-value ring honest: a project that is the whole category still gets a
  * closed circle instead of a path that starts and ends on the same point.
  */
-function ringDashes(values: number[], radius: number): { dasharray: string; dashoffset: number }[] {
+function ringDashes(
+  values: number[],
+  offsets: number[],
+  radius: number
+): { dasharray: string; dashoffset: number }[] {
   const circumference = 2 * Math.PI * radius;
-  const total = values.reduce((sum, value) => sum + value, 0);
+  const total = offsets.reduce((sum, value) => sum + value, 0);
   const gap = values.length > 1 ? SECTOR_GAP : 0;
 
   let travelled = 0;
-  return values.map((value) => {
+  return values.map((value, index) => {
     const fraction = total > 0 ? value / total : 0;
     const length = fraction * circumference - gap;
     const dash = {
       dasharray: `${Math.max(0, length)} ${circumference}`,
       dashoffset: -travelled,
     };
-    travelled += fraction * circumference;
+    travelled += total > 0 ? (offsets[index] / total) * circumference : 0;
     return dash;
   });
 }
@@ -50,9 +59,11 @@ function ringDashes(values: number[], radius: number): { dasharray: string; dash
  *
  * The category is the unit you budget in, so it gets its own ring; the project
  * is the unit the hours actually went to, so it gets the sectors. Both rings
- * are laid out by share of the category — the light outer one by plan, the
- * solid inner one by what was tracked — which makes a project that outgrew its
- * share of the plan visible as a fat dark sector behind a thin light one.
+ * are laid out by share of the category's plan: the light outer one draws every
+ * project's plan, the solid inner one draws what was tracked, capped at that
+ * plan. A tracked sector therefore always sits inside its plan sector, so
+ * running over shows up in the numbers rather than as a sector that outgrows
+ * the plan behind it.
  */
 export function PlanActualByCategory({ groups, rangeLabel }: PlanActualByCategoryProps) {
   const totalTracked = groups.reduce((sum, group) => sum + group.actualSeconds, 0);
@@ -75,14 +86,18 @@ export function PlanActualByCategory({ groups, rangeLabel }: PlanActualByCategor
         ) : (
           <ul className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
             {groups.map((group) => {
-              const outer = ringDashes(
-                group.projects.map((project) => project.plannedSeconds),
-                OUTER_RADIUS
-              );
-              const inner = ringDashes(
-                group.projects.map((project) => project.actualSeconds),
-                INNER_RADIUS
-              );
+              const plan = group.projects.map((project) => project.plannedSeconds);
+              const hasPlan = plan.some((value) => value > 0);
+              // The tracked ring is capped at the plan; a category with no plan
+              // at all has nothing to cap against, so it keeps its own total.
+              const innerValues = hasPlan
+                ? group.projects.map((project) =>
+                    Math.min(project.actualSeconds, project.plannedSeconds)
+                  )
+                : group.projects.map((project) => project.actualSeconds);
+              const innerOffsets = hasPlan ? plan : innerValues;
+              const outer = ringDashes(plan, plan, OUTER_RADIUS);
+              const inner = ringDashes(innerValues, innerOffsets, INNER_RADIUS);
               const over =
                 group.plannedSeconds > 0 && group.actualSeconds > group.plannedSeconds;
               const adherence =

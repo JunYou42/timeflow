@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Copy, Loader2 } from "lucide-react";
+import { Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUserTimezone } from "@/hooks/use-user-timezone";
-import { findOverlappingSchedules } from "@/lib/stats";
 import {
   addDaysInTimezone,
   formatDateTimeLabel,
@@ -54,7 +53,6 @@ export function ScheduleDuplicateDialog({
   source,
 }: ScheduleDuplicateDialogProps) {
   const timezone = useUserTimezone();
-  const schedules = useAppStore((state) => state.schedules);
   const createSchedule = useAppStore((state) => state.createSchedule);
 
   const [startAt, setStartAt] = useState("");
@@ -89,14 +87,6 @@ export function ScheduleDuplicateDialog({
     start && end && end.getTime() > start.getTime()
       ? Math.round((end.getTime() - start.getTime()) / 60000)
       : null;
-
-  const conflicts = useMemo(() => {
-    if (!start || !end || end.getTime() <= start.getTime()) return [];
-    return findOverlappingSchedules(
-      { start_at: start.toISOString(), end_at: end.toISOString() },
-      schedules
-    );
-  }, [start, end, schedules]);
 
   const submit = async () => {
     if (!source || !start || !end || end.getTime() <= start.getTime()) return;
@@ -197,21 +187,6 @@ export function ScheduleDuplicateDialog({
                   )}`
                 : "Pick a start and an end that come after it."}
             </p>
-
-            {conflicts.length > 0 ? (
-              <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                <span>
-                  Overlaps {conflicts.length} existing{" "}
-                  {conflicts.length === 1 ? "entry" : "entries"} (
-                  {conflicts
-                    .slice(0, 2)
-                    .map((conflict) => conflict.title)
-                    .join(", ")}
-                  ). You can still create it.
-                </span>
-              </p>
-            ) : null}
           </div>
         ) : null}
 

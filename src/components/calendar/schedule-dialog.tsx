@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertTriangle, Copy, Loader2, Trash2 } from "lucide-react";
+import { Copy, Loader2, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
@@ -37,8 +37,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useUserTimezone } from "@/hooks/use-user-timezone";
-import { findOverlappingSchedules } from "@/lib/stats";
-import { formatDateTimeLabel, parseLocalInputValue, toLocalInputValue } from "@/lib/time";
+import { parseLocalInputValue, toLocalInputValue } from "@/lib/time";
 import type { Schedule, ScheduleType } from "@/lib/types";
 import { scheduleFormSchema, type ScheduleFormValues } from "@/lib/validation";
 import { describeError, useAppStore } from "@/store/use-app-store";
@@ -63,12 +62,7 @@ interface ScheduleDialogProps {
   onDuplicate?: (schedule: Schedule) => void;
 }
 
-/**
- * Create / edit a calendar entry.
- *
- * Overlapping entries are never created silently: when a conflict is detected
- * the dialog explains it and requires an explicit confirmation before saving.
- */
+/** Create / edit a calendar entry. */
 export function ScheduleDialog({
   open,
   onOpenChange,
@@ -78,7 +72,6 @@ export function ScheduleDialog({
   onDuplicate,
 }: ScheduleDialogProps) {
   const timezone = useUserTimezone();
-  const schedules = useAppStore((state) => state.schedules);
   const tasks = useAppStore((state) => state.tasks);
   const projects = useAppStore((state) => state.projects);
   const createSchedule = useAppStore((state) => state.createSchedule);
@@ -89,7 +82,6 @@ export function ScheduleDialog({
   const [deleting, setDeleting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [overlapConfirmed, setOverlapConfirmed] = useState(false);
 
   const isEditing = Boolean(schedule);
 
@@ -109,7 +101,6 @@ export function ScheduleDialog({
   useEffect(() => {
     if (!open) return;
     setFormError(null);
-    setOverlapConfirmed(false);
     setDeleteOpen(false);
     if (schedule) {
       form.reset({
@@ -141,18 +132,6 @@ export function ScheduleDialog({
   // The picker hands back one id; only one of the two links is ever set.
   const assignment = form.watch("task_id") ?? form.watch("project_id");
 
-  /** Conflicts recomputed from the live field values. */
-  const conflicts = useMemo(() => {
-    if (!startAt || !endAt) return [];
-    const start = parseLocalInputValue(startAt, timezone);
-    const end = parseLocalInputValue(endAt, timezone);
-    if (!start || !end || end <= start) return [];
-    return findOverlappingSchedules(
-      { id: schedule?.id, start_at: start.toISOString(), end_at: end.toISOString() },
-      schedules
-    );
-  }, [startAt, endAt, schedules, timezone, schedule?.id]);
-
   const durationMinutes = useMemo(() => {
     if (!startAt || !endAt) return null;
     const start = parseLocalInputValue(startAt, timezone);
@@ -163,10 +142,6 @@ export function ScheduleDialog({
   }, [startAt, endAt, timezone]);
 
   const onSubmit = form.handleSubmit(async (values) => {
-    if (conflicts.length > 0 && !overlapConfirmed) {
-      setOverlapConfirmed(true);
-      return;
-    }
     setPending(true);
     setFormError(null);
     try {
@@ -220,7 +195,6 @@ export function ScheduleDialog({
   };
 
   const errors = form.formState.errors;
-  const needsOverlapConfirmation = conflicts.length > 0 && !overlapConfirmed;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -316,34 +290,6 @@ export function ScheduleDialog({
             <Textarea id="schedule-description" rows={2} {...form.register("description")} />
           </div>
 
-          {conflicts.length > 0 ? (
-            <div
-              className={
-                overlapConfirmed
-                  ? "rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
-                  : "rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
-              }
-            >
-              <p className="flex items-center gap-2 font-medium">
-                <AlertTriangle className="size-4" />
-                {conflicts.length} overlapping {conflicts.length === 1 ? "entry" : "entries"}
-              </p>
-              <ul className="mt-2 space-y-1 text-xs">
-                {conflicts.slice(0, 3).map((conflict) => (
-                  <li key={conflict.id} className="truncate">
-                    {conflict.title} · {formatDateTimeLabel(conflict.start_at, timezone)} →{" "}
-                    {formatDateTimeLabel(conflict.end_at, timezone)}
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-2 text-xs">
-                {overlapConfirmed
-                  ? "Overlap confirmed. Press save again to store it."
-                  : "Press save again to confirm that this overlap is intentional."}
-              </p>
-            </div>
-          ) : null}
-
           {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
         </form>
 
@@ -379,7 +325,7 @@ export function ScheduleDialog({
             </Button>
             <Button type="submit" form="schedule-form" disabled={pending}>
               {pending ? <Loader2 className="size-4 animate-spin" /> : null}
-              {needsOverlapConfirmation ? "Confirm overlap" : isEditing ? "Save changes" : "Create schedule"}
+              {isEditing ? "Save changes" : "Create schedule"}
             </Button>
           </div>
         </DialogFooter>

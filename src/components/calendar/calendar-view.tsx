@@ -18,7 +18,7 @@ import { ScheduleDuplicateDialog } from "@/components/calendar/schedule-duplicat
 import { SchedulePool } from "@/components/calendar/schedule-pool";
 import { Button } from "@/components/ui/button";
 import { useUserTimezone } from "@/hooks/use-user-timezone";
-import { buildCategoryPlanVsActual, findOverlappingSchedules } from "@/lib/stats";
+import { buildCategoryPlanVsActual } from "@/lib/stats";
 import {
   formatDateLabel,
   formatDateTimeLabel,
@@ -139,22 +139,12 @@ export function CalendarView() {
   ) => {
     if (!start || !end) return;
     const candidate = { id: scheduleId, start_at: start.toISOString(), end_at: end.toISOString() };
-    const conflicts = findOverlappingSchedules(candidate, schedules);
     try {
       await updateSchedule(scheduleId, {
         start_at: candidate.start_at,
         end_at: candidate.end_at,
       });
-      if (conflicts.length > 0) {
-        toast.warning("Saved, but this overlaps another block", {
-          description: conflicts
-            .slice(0, 2)
-            .map((conflict) => conflict.title)
-            .join(", "),
-        });
-      } else {
-        toast.success("Schedule updated");
-      }
+      toast.success("Schedule updated");
     } catch (error) {
       toast.error("Could not move the schedule", { description: describeError(error) });
     }
@@ -202,22 +192,9 @@ export function CalendarView() {
         schedule_type: taskId || projectId ? "task" : "event",
         description: null,
       });
-      const conflicts = findOverlappingSchedules(
-        { id: saved.id, start_at: saved.start_at, end_at: saved.end_at },
-        schedules
-      );
-      if (conflicts.length > 0) {
-        toast.warning("Scheduled, but it overlaps another block", {
-          description: conflicts
-            .slice(0, 2)
-            .map((conflict) => conflict.title)
-            .join(", "),
-        });
-      } else {
-        toast.success("Scheduled", {
-          description: formatDateTimeLabel(saved.start_at, timezone),
-        });
-      }
+      toast.success("Scheduled", {
+        description: formatDateTimeLabel(saved.start_at, timezone),
+      });
     } catch (error) {
       toast.error("Could not schedule it", { description: describeError(error) });
     }
@@ -379,7 +356,7 @@ export function CalendarView() {
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
         <CalendarPlus className="size-3.5" />
         Tip: drag a task or project from the list onto the grid, or click and drag to block out
-        time. Drag a block to reschedule it; conflicts are flagged when you save.
+        time. Drag a block to reschedule it.
       </p>
 
       <ScheduleDialog
