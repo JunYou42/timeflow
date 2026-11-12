@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { CalendarDays, Timer } from "lucide-react";
+import { CalendarDays, CheckCircle2, Timer } from "lucide-react";
 import { toast } from "sonner";
 
 import { CategoryDot, TaskPriorityBadge } from "@/components/tasks/task-meta";
@@ -151,6 +151,12 @@ export function TaskListView({
                         <span className={cn("flex items-center gap-1", overdue && "text-destructive")}>
                           <CalendarDays className="size-3" />
                           {formatDateLabel(task.due_date, timezone)}
+                        </span>
+                      ) : null}
+                      {task.completed_at ? (
+                        <span className="flex items-center gap-1" title="Completed">
+                          <CheckCircle2 className="size-3" />
+                          {formatDateLabel(task.completed_at, timezone)}
                         </span>
                       ) : null}
                       {task.actual_seconds > 0 ? (

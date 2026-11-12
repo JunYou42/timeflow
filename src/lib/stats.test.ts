@@ -259,64 +259,107 @@ describe("buildCategoryPlanVsActual", () => {
     end: new Date("2026-11-12T00:00:00.000Z"),
   };
 
-  it("inherits a schedule's category from its task or project", () => {
+  it("books a record to its project's category, not the task's own", () => {
     const work = makeCategory("Work");
-    const task = makeTask({ category_id: work.id });
-    const project = makeProject({ category_id: work.id });
+    const learning = makeCategory("Learning");
+    const project = makeProject({ name: "Client", category_id: work.id });
+    const task = makeTask({ project_id: project.id, category_id: learning.id });
 
     const schedules = [
       makeSchedule("2026-11-11T09:00:00.000Z", "2026-11-11T10:00:00.000Z", { task_id: task.id }),
-      makeSchedule("2026-11-11T11:00:00.000Z", "2026-11-11T11:30:00.000Z", {
-        project_id: project.id,
-      }),
     ];
 
-    const rows = buildCategoryPlanVsActual(
+    const groups = buildCategoryPlanVsActual(
       schedules,
       [],
       [task],
       [project],
-      [work],
+      [work, learning],
       range
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].categoryId).toBe(work.id);
-    expect(rows[0].plannedSeconds).toBe(5400);
-    expect(rows[0].actualSeconds).toBe(0);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].key).toBe(work.id);
+    expect(groups[0].plannedSeconds).toBe(3600);
+    expect(groups[0].projects.map((slice) => slice.name)).toEqual(["Client"]);
   });
 
-  it("clips records to the range and collects the uncategorized bucket", () => {
+  it("follows a task back to its project for tracked time", () => {
     const work = makeCategory("Work");
+    const project = makeProject({ name: "Client", category_id: work.id });
+    const task = makeTask({ project_id: project.id });
+    const entries = [
+      makeEntry("2026-11-11T08:00:00.000Z", "2026-11-11T09:00:00.000Z", { task_id: task.id }),
+    ];
+
+    const groups = buildCategoryPlanVsActual([], entries, [task], [project], [work], range);
+    expect(groups[0].actualSeconds).toBe(3600);
+    expect(groups[0].projects[0].actualSeconds).toBe(3600);
+    expect(groups[0].actualSeconds).toBe(groups[0].projects[0].actualSeconds);
+  });
+
+  it("clips records to the range and falls back to the entry's own category", () => {
+    const work = makeCategory("Work");
+    const project = makeProject({ name: "Client", category_id: work.id });
     const schedules = [makeSchedule("2026-11-11T23:00:00.000Z", "2026-11-12T02:00:00.000Z")];
     const entries = [
       makeEntry("2026-11-11T08:00:00.000Z", "2026-11-11T09:00:00.000Z", {
-        category_id: work.id,
+        project_id: project.id,
       }),
-      makeEntry("2026-11-11T22:00:00.000Z", "2026-11-11T22:30:00.000Z"),
+      // No project, but the entry carries a category of its own.
+      makeEntry("2026-11-11T22:00:00.000Z", "2026-11-11T22:30:00.000Z", { category_id: work.id }),
+      // Nothing at all: uncategorized, with no project behind it either.
+      makeEntry("2026-11-11T21:00:00.000Z", "2026-11-11T21:10:00.000Z"),
     ];
 
-    const rows = buildCategoryPlanVsActual(schedules, entries, [], [], [work], range);
-    const byId = new Map(rows.map((row) => [row.categoryId, row]));
-    expect(byId.get(work.id)?.actualSeconds).toBe(3600);
-    expect(byId.get("uncategorized")?.actualSeconds).toBe(1800);
+    const groups = buildCategoryPlanVsActual(schedules, entries, [], [project], [work], range);
+    const workGroup = groups.find((group) => group.key === work.id);
+    expect(workGroup?.actualSeconds).toBe(5400);
+    // The project and the project-less entry are separate sectors.
+    expect(workGroup?.projects.map((slice) => slice.name)).toEqual(["Client", "No project"]);
+
+    const uncategorized = groups.find((group) => group.key === "uncategorized");
     // Only the hour that falls inside the day is planned; the rest belongs to
     // the next period.
-    expect(byId.get("uncategorized")?.plannedSeconds).toBe(3600);
+    expect(uncategorized?.plannedSeconds).toBe(3600);
+    expect(uncategorized?.actualSeconds).toBe(600);
+    expect(uncategorized?.projects.map((slice) => slice.name)).toEqual(["No project"]);
   });
 
-  it("drops categories with no activity and orders the rest", () => {
+  it("splits a category into its projects and leaves the idle ones out", () => {
     const work = makeCategory("Work");
-    const learning = makeCategory("Learning");
-    const idle = makeCategory("Idle");
+    const alpha = makeProject({ name: "Alpha", category_id: work.id });
+    const beta = makeProject({ name: "Beta", category_id: work.id });
+    const idle = makeProject({ name: "Idle", category_id: work.id });
     const entries = [
-      makeEntry("2026-11-11T08:00:00.000Z", "2026-11-11T09:00:00.000Z", {
-        category_id: learning.id,
-      }),
-      makeEntry("2026-11-11T10:00:00.000Z", "2026-11-11T10:30:00.000Z", { category_id: work.id }),
+      makeEntry("2026-11-11T08:00:00.000Z", "2026-11-11T09:00:00.000Z", { project_id: alpha.id }),
+      makeEntry("2026-11-11T10:00:00.000Z", "2026-11-11T10:30:00.000Z", { project_id: beta.id }),
     ];
 
-    const rows = buildCategoryPlanVsActual([], entries, [], [], [work, learning, idle], range);
-    expect(rows.map((row) => row.name)).toEqual(["Learning", "Work"]);
+    const groups = buildCategoryPlanVsActual([], entries, [], [alpha, beta, idle], [work], range);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].name).toBe("Work");
+    expect(groups[0].projects.map((slice) => slice.name)).toEqual(["Alpha", "Beta"]);
+  });
+
+  it("orders the categories by tracked time", () => {
+    const work = makeCategory("Work");
+    const learning = makeCategory("Learning");
+    const client = makeProject({ name: "Client", category_id: work.id });
+    const course = makeProject({ name: "Course", category_id: learning.id });
+    const entries = [
+      makeEntry("2026-11-11T08:00:00.000Z", "2026-11-11T09:00:00.000Z", { project_id: course.id }),
+      makeEntry("2026-11-11T10:00:00.000Z", "2026-11-11T10:30:00.000Z", { project_id: client.id }),
+    ];
+
+    const groups = buildCategoryPlanVsActual(
+      [],
+      entries,
+      [],
+      [client, course],
+      [work, learning],
+      range
+    );
+    expect(groups.map((group) => group.name)).toEqual(["Learning", "Work"]);
   });
 });
 

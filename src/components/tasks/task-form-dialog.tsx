@@ -91,10 +91,14 @@ export function TaskFormDialog({
       parent_task_id: undefined,
       status: "todo",
       priority: "medium",
-      due_date: undefined,
+      // A task is picked up the day it is written down, so the due date opens on
+      // today instead of empty. 9am keeps the field tidy -- the day is the point,
+      // and the hour can be nudged when it matters.
+      due_date: `${toLocalInputValue(new Date(), timezone).slice(0, 10)}T09:00`,
+      completed_at: undefined,
       estimated_minutes: undefined,
     }),
-    []
+    [timezone]
   );
 
   const form = useForm<TaskFormValues>({
@@ -115,6 +119,7 @@ export function TaskFormDialog({
         status: task.status,
         priority: task.priority,
         due_date: task.due_date ? toLocalInputValue(task.due_date, timezone) : undefined,
+        completed_at: task.completed_at ? toLocalInputValue(task.completed_at, timezone) : undefined,
         estimated_minutes:
           task.estimated_minutes === null ? undefined : String(task.estimated_minutes),
       });
@@ -126,7 +131,7 @@ export function TaskFormDialog({
       project_id: defaults?.project_id ?? undefined,
       category_id: defaults?.category_id ?? undefined,
       parent_task_id: defaults?.parent_task_id ?? undefined,
-      due_date: defaults?.due_date ?? undefined,
+      due_date: defaults?.due_date ?? emptyValues.due_date,
       estimated_minutes:
         defaults?.estimated_minutes === null || defaults?.estimated_minutes === undefined
           ? undefined
@@ -143,6 +148,7 @@ export function TaskFormDialog({
   // A task cannot be filed under a project that has already finished -- unless
   // that is where it already lives, so opening an old task keeps its link.
   const selectedProjectId = form.watch("project_id");
+  const status = form.watch("status");
   const projectCandidates = useMemo(() => {
     const now = Date.now();
     return projects
@@ -162,6 +168,13 @@ export function TaskFormDialog({
       const dueIso = values.due_date
         ? parseLocalInputValue(String(values.due_date), timezone)?.toISOString() ?? null
         : null;
+      // Status is the source of truth: a task that is not done has no completion
+      // date, and a done task with the field left blank falls back to the
+      // repository's "now" so the date is never a lie.
+      const completedIso =
+        values.status === "done" && values.completed_at
+          ? parseLocalInputValue(String(values.completed_at), timezone)?.toISOString() ?? null
+          : null;
       const estimated = parseOptionalWholeNumber(values.estimated_minutes);
 
       if (task) {
@@ -174,6 +187,7 @@ export function TaskFormDialog({
           status: values.status as TaskStatus,
           priority: values.priority as TaskPriority,
           due_date: dueIso,
+          completed_at: completedIso,
           estimated_minutes: estimated,
         });
         toast.success("Task updated");
@@ -190,6 +204,7 @@ export function TaskFormDialog({
         status: (values.status as TaskStatus) ?? "todo",
         priority: (values.priority as TaskPriority) ?? "medium",
         due_date: dueIso,
+        completed_at: completedIso,
         estimated_minutes: estimated,
       });
       toast.success("Task created");
@@ -293,7 +308,7 @@ export function TaskFormDialog({
             <div className="space-y-2">
               <Label>Status</Label>
               <Select
-                value={form.watch("status")}
+                value={status}
                 onValueChange={(value) =>
                   form.setValue("status", value as TaskStatus, { shouldDirty: true })
                 }
@@ -339,6 +354,24 @@ export function TaskFormDialog({
                 <p className="text-xs text-destructive">{errors.due_date.message}</p>
               ) : null}
             </div>
+
+            {status === "done" ? (
+              <div className="space-y-2">
+                <Label htmlFor="task-completed">Completed at</Label>
+                <Input
+                  id="task-completed"
+                  type="datetime-local"
+                  {...form.register("completed_at")}
+                />
+                {errors.completed_at ? (
+                  <p className="text-xs text-destructive">{errors.completed_at.message}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Leave blank to record the moment you save.
+                  </p>
+                )}
+              </div>
+            ) : null}
 
             <div className="space-y-2">
               <Label htmlFor="task-estimate">Estimated minutes</Label>

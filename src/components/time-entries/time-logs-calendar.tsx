@@ -146,8 +146,8 @@ export function TimeLogsCalendar({
     arg.event.remove();
     if (!droppedStart) return;
 
-    // A drop onto the month grid is all-day, so it is given a working-hour slot
-    // rather than being left as an entry in the all-day row.
+    // A drop onto the month grid has no time of day to it, so it is given a
+    // working-hour slot instead of starting at midnight.
     const start = new Date(droppedStart);
     if (allDay) start.setHours(9, 0, 0, 0);
     const end =
@@ -221,13 +221,18 @@ export function TimeLogsCalendar({
         headerToolbar={false}
         firstDay={1}
         // Bounded height: the grid scrolls inside this box, so its toolbar and
-        // the day header row stay put while the hours scroll past.
-        height="calc(100vh - 32rem)"
+        // the day header row stay put while the hours scroll past. The 1.3
+        // factor stretches it past the fold -- the added hours are worth the
+        // page scroll they bring.
+        height="calc((100vh - 32rem) * 1.5)"
         nowIndicator
         editable
         selectable
         droppable
         dayMaxEvents={3}
+        // Every entry carries a start and an end, so the all-day row would only
+        // ever sit empty above the hours.
+        allDaySlot={false}
         slotMinTime="05:00:00"
         slotMaxTime="24:00:00"
         scrollTime="08:00:00"

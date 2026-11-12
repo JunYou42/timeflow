@@ -182,6 +182,10 @@ export function TaskDetailSheet({ taskId, open, onOpenChange }: TaskDetailSheetP
                     value={task.due_date ? formatDateTimeLabel(task.due_date, timezone) : "—"}
                   />
                   <Meta
+                    label="Completed"
+                    value={task.completed_at ? formatDateTimeLabel(task.completed_at, timezone) : "—"}
+                  />
+                  <Meta
                     label="Estimated"
                     value={task.estimated_minutes ? `${task.estimated_minutes} min` : "—"}
                   />

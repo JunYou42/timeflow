@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/layout/stat-card";
 import { EmptyState } from "@/components/layout/states";
-import { CategoryPlanActual } from "@/components/analytics/category-plan-actual";
+import { PlanActualByCategory } from "@/components/analytics/plan-actual-by-category";
 import { SchedulePool } from "@/components/calendar/schedule-pool";
 import { TimeEntryDialog } from "@/components/time-entries/time-entry-dialog";
 import type { TimeEntryDialogDefaults } from "@/components/time-entries/time-entry-dialog";
@@ -157,8 +157,8 @@ export function TimeLogsWorkspace() {
         }
       />
 
-      <CategoryPlanActual
-        rows={categoryRows}
+      <PlanActualByCategory
+        groups={categoryRows}
         rangeLabel={`${formatDateLabel(range.start, timezone)} → ${formatDateLabel(
           new Date(range.end.getTime() - 1),
           timezone

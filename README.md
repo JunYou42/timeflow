@@ -24,14 +24,20 @@ records — no hard-coded chart values.
   each writes its own time entry — so overlapping records show up on both
   Calendar and Time logs.
 - **Tasks** — table, list and kanban views over the same data; search, filter by
-  status / priority / project / category; five sort orders; one level of
+  period / status / project / category; five sort orders; one level of
   subtasks; a right-hand detail drawer showing estimates vs. tracked time and
-  everything scheduled or logged against the task. The list view is divided by
-  project — one section per project in the projects page's own order, plus a
-  trailing "No project" bucket — with the status kept in reading order inside
-  each section. A task can only be filed under a project that is still running:
-  the project picker hides anything whose end date has passed, unless that is
-  already where the task lives.
+  everything scheduled or logged against the task. Rows, cards and the drawer
+  all surface the completion date once a task is done, and the edit form lets
+  you set or correct that date by hand (leave it blank to record the moment you
+  save). The period switch (today / this week / this month, this week by
+  default) is a floor rather than a window:
+  work that was already finished before the period drops out, while open tasks
+  stay listed however old they are. New tasks open with the due date filled in as
+  today at 9am. The list view is divided by project — one section per project in
+  the projects page's own order, plus a trailing "No project" bucket — with the
+  status kept in reading order inside each section. A task can only be filed
+  under a project that is still running: the project picker hides anything whose
+  end date has passed, unless that is already where the task lives.
 - **Projects** — a vertical timeline (time runs down the page): each project is a
   bar placed at its planned start and sized by its planned duration, overlapping
   projects are spread across lanes, and a dashed "today" line is always visible.
@@ -70,8 +76,11 @@ records — no hard-coded chart values.
   created for it, already linked. Any saved block can be **duplicated** — the
   copy keeps its title, duration and links, and can be pushed to the next day,
   the next week, the next weekday, or any window you type in — or **deleted**
-  (with a confirmation step) straight from the edit dialog. Above the grid, a
-  **plan vs. actual by category** summary follows the visible period, so
+  (with a confirmation step) straight from the edit dialog. Above the grid,
+  **plan vs. actual by category** follows the visible period as one ring per
+  category, its projects drawn as the sectors: the light outer ring splits by
+  plan, the solid inner one by what was tracked, so a project that outgrew its
+  share of the plan shows up as a fat dark sector behind a thin light one —
   navigating the calendar re-scopes both the plan and what was actually
   tracked.
 - **Time logs** — the audit trail: every entry, grouped by day in the list view
@@ -90,7 +99,7 @@ records — no hard-coded chart values.
   newly-spent time (its category comes with it), click an empty slot to backfill
   a missing entry, and click a block to open the full form — where it can also
   be **deleted**. Both
-  views are headed by the same **plan vs. actual by category** summary, scoped
+  views are headed by the same per-category **plan vs. actual** rings, scoped
   to the selected period (or, in calendar view, to the visible grid).
 - **Analytics** — planned vs. actual per day, category breakdown, daily trend,
   plan adherence, completion rate and an estimation-accuracy table per task and

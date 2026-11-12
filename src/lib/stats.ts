@@ -259,26 +259,39 @@ export function buildPlannedVsActual(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Per-category plan vs. actual                                                */
+/* Plan vs. actual, grouped by category then project                           */
 /* -------------------------------------------------------------------------- */
 
-export interface CategoryPlanActualRow {
-  /** `uncategorized` collects everything with no category, so the rows reconcile. */
-  categoryId: UUID | "uncategorized";
+export interface PlanActualSlice {
+  /** A project id, or `unassigned` for records that never reached a project. */
+  key: string;
   name: string;
   color: string;
   plannedSeconds: number;
   actualSeconds: number;
 }
 
+export interface CategoryPlanActualGroup {
+  /** A category id, or `uncategorized` for records that never reached one. */
+  key: string;
+  name: string;
+  color: string;
+  plannedSeconds: number;
+  actualSeconds: number;
+  /** The projects that make up the category, biggest by tracked time first. */
+  projects: PlanActualSlice[];
+}
+
 /**
- * Per-category planned vs. tracked time inside a period.
+ * Planned vs. tracked time inside a period, grouped by category and then split
+ * into the projects that make up that category.
  *
- * A schedule's category is inherited from what it is attached to — its project
- * first, then its task — while a time entry carries its own `category_id`,
- * which the entry dialogs derive from the same task or project. Only the part
- * of a record that falls inside `range` is counted, so a block that straddles
- * the boundary is clipped rather than inflating one period.
+ * A record reaches a project through its own `project_id` or the one behind its
+ * task, and reaches a category through that project — a task's own category is
+ * only a fallback for records that have no project at all, so a project's
+ * category always wins. Only the part of a record that falls inside `range` is
+ * counted, so a block that straddles the boundary is clipped rather than
+ * inflating one period.
  */
 export function buildCategoryPlanVsActual(
   schedules: Schedule[],
@@ -287,28 +300,14 @@ export function buildCategoryPlanVsActual(
   projects: Project[],
   categories: Category[],
   range: DateRange
-): CategoryPlanActualRow[] {
+): CategoryPlanActualGroup[] {
+  const projectById = new Map(projects.map((project) => [project.id, project]));
   const categoryById = new Map(categories.map((category) => [category.id, category]));
-  const tasksById = new Map(tasks.map((task) => [task.id, task]));
-  const projectsById = new Map(projects.map((project) => [project.id, project]));
+  const projectByTask = new Map(tasks.map((task) => [task.id, task.project_id]));
+  const categoryByTask = new Map(tasks.map((task) => [task.id, task.category_id]));
 
-  const buckets = new Map<string, CategoryPlanActualRow>();
-
-  const bucketFor = (categoryId: UUID | null): CategoryPlanActualRow => {
-    const key = categoryId && categoryById.has(categoryId) ? categoryId : "uncategorized";
-    const existing = buckets.get(key);
-    if (existing) return existing;
-    const category = key === "uncategorized" ? undefined : categoryById.get(key);
-    const row: CategoryPlanActualRow = {
-      categoryId: (category?.id ?? "uncategorized") as UUID | "uncategorized",
-      name: category?.name ?? "Uncategorized",
-      color: category?.color ?? "#cbd5e1",
-      plannedSeconds: 0,
-      actualSeconds: 0,
-    };
-    buckets.set(key, row);
-    return row;
-  };
+  const groups = new Map<string, CategoryPlanActualGroup>();
+  const slices = new Map<string, PlanActualSlice>();
 
   const overlapSeconds = (start: string, end: string): number => {
     const from = Math.max(toDate(start).getTime(), range.start.getTime());
@@ -316,27 +315,77 @@ export function buildCategoryPlanVsActual(
     return to > from ? Math.floor((to - from) / 1000) : 0;
   };
 
+  /** Resolve where a record belongs, creating the category and slice on first sight. */
+  const locate = (projectId: UUID | null, fallbackCategoryId: UUID | null) => {
+    const project = projectId ? projectById.get(projectId) ?? null : null;
+    const categoryId = project?.category_id ?? fallbackCategoryId ?? null;
+    const categoryKey = categoryId && categoryById.has(categoryId) ? categoryId : "uncategorized";
+    const projectKey = project ? project.id : "unassigned";
+
+    let group = groups.get(categoryKey);
+    if (!group) {
+      const category = categoryKey === "uncategorized" ? undefined : categoryById.get(categoryKey);
+      group = {
+        key: categoryKey,
+        name: category?.name ?? "Uncategorized",
+        color: category?.color ?? "#cbd5e1",
+        plannedSeconds: 0,
+        actualSeconds: 0,
+        projects: [],
+      };
+      groups.set(categoryKey, group);
+    }
+
+    const sliceKey = `${categoryKey}::${projectKey}`;
+    let slice = slices.get(sliceKey);
+    if (!slice) {
+      slice = {
+        key: projectKey,
+        name: project?.name ?? "No project",
+        color: project?.color ?? "#94a3b8",
+        plannedSeconds: 0,
+        actualSeconds: 0,
+      };
+      slices.set(sliceKey, slice);
+      group.projects.push(slice);
+    }
+
+    return { group, slice };
+  };
+
+  const resolveProject = (projectId: UUID | null, taskId: UUID | null): UUID | null =>
+    projectId ?? (taskId ? projectByTask.get(taskId) ?? null : null);
+
+  const bySize = (a: PlanActualSlice | CategoryPlanActualGroup, b: typeof a) =>
+    b.actualSeconds - a.actualSeconds ||
+    b.plannedSeconds - a.plannedSeconds ||
+    a.name.localeCompare(b.name);
+
   for (const schedule of schedules) {
-    const project = schedule.project_id ? projectsById.get(schedule.project_id) : undefined;
-    const task = schedule.task_id ? tasksById.get(schedule.task_id) : undefined;
-    bucketFor(project?.category_id ?? task?.category_id ?? null).plannedSeconds += overlapSeconds(
-      schedule.start_at,
-      schedule.end_at
+    const seconds = overlapSeconds(schedule.start_at, schedule.end_at);
+    if (seconds <= 0) continue;
+    const { group, slice } = locate(
+      resolveProject(schedule.project_id, schedule.task_id),
+      schedule.task_id ? categoryByTask.get(schedule.task_id) ?? null : null
     );
+    group.plannedSeconds += seconds;
+    slice.plannedSeconds += seconds;
   }
 
   for (const entry of entries) {
-    bucketFor(entry.category_id).actualSeconds += overlapSeconds(entry.start_at, entry.end_at);
+    const seconds = overlapSeconds(entry.start_at, entry.end_at);
+    if (seconds <= 0) continue;
+    const { group, slice } = locate(
+      resolveProject(entry.project_id, entry.task_id),
+      entry.category_id
+    );
+    group.actualSeconds += seconds;
+    slice.actualSeconds += seconds;
   }
 
-  return [...buckets.values()]
-    .filter((row) => row.plannedSeconds > 0 || row.actualSeconds > 0)
-    .sort(
-      (a, b) =>
-        b.plannedSeconds - a.plannedSeconds ||
-        b.actualSeconds - a.actualSeconds ||
-        a.name.localeCompare(b.name)
-    );
+  return [...groups.values()]
+    .map((group) => ({ ...group, projects: group.projects.slice().sort(bySize) }))
+    .sort(bySize);
 }
 
 /* -------------------------------------------------------------------------- */

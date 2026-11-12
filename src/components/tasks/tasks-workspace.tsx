@@ -20,10 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useUserTimezone } from "@/hooks/use-user-timezone";
 import { decorateTasksWithStats } from "@/lib/stats";
+import { resolveRange, type RangePreset } from "@/lib/time";
 import {
-  TASK_PRIORITIES,
-  TASK_PRIORITY_LABELS,
   TASK_STATUSES,
   TASK_STATUS_LABELS,
   type TaskPriority,
@@ -34,8 +34,15 @@ import { useAppStore } from "@/store/use-app-store";
 
 type ViewMode = "table" | "board" | "list";
 type SortKey = "due" | "priority" | "created" | "tracked" | "title";
+type PeriodKey = Extract<RangePreset, "today" | "week" | "month">;
 
 const ALL = "__all__";
+
+const PERIODS: { value: PeriodKey; label: string }[] = [
+  { value: "today", label: "Today" },
+  { value: "week", label: "This week" },
+  { value: "month", label: "This month" },
+];
 
 const PRIORITY_WEIGHT: Record<TaskPriority, number> = {
   urgent: 0,
@@ -54,10 +61,12 @@ export function TasksWorkspace() {
   const categories = useAppStore((state) => state.categories);
   const timeEntries = useAppStore((state) => state.timeEntries);
 
+  const timezone = useUserTimezone();
+
   const [view, setView] = useState<ViewMode>("table");
   const [query, setQuery] = useState("");
+  const [period, setPeriod] = useState<PeriodKey>("week");
   const [status, setStatus] = useState<string>(ALL);
-  const [priority, setPriority] = useState<string>(ALL);
   const [projectId, setProjectId] = useState<string>(ALL);
   const [categoryId, setCategoryId] = useState<string>(ALL);
   const [sortKey, setSortKey] = useState<SortKey>("due");
@@ -88,13 +97,20 @@ export function TasksWorkspace() {
 
   const decorated = useMemo(() => decorateTasksWithStats(tasks, timeEntries), [tasks, timeEntries]);
 
+  // The period is a floor rather than a window: work that was already finished
+  // before it began is history and drops out, while open tasks stay put however
+  // old they are -- the page is a backlog to move, not an archive to browse.
+  const range = useMemo(() => resolveRange(period, timezone), [period, timezone]);
+
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     let result = decorated.filter((task) => {
       if (task.deleted_at) return false;
+      if (task.completed_at && new Date(task.completed_at).getTime() < range.start.getTime()) {
+        return false;
+      }
       if (needle && !task.title.toLowerCase().includes(needle)) return false;
       if (status !== ALL && task.status !== status) return false;
-      if (priority !== ALL && task.priority !== priority) return false;
       if (projectId !== ALL && task.project_id !== projectId) return false;
       if (categoryId !== ALL && task.category_id !== categoryId) return false;
       return true;
@@ -122,17 +138,15 @@ export function TasksWorkspace() {
     });
 
     return result;
-  }, [decorated, query, status, priority, projectId, categoryId, sortKey]);
+  }, [decorated, query, status, projectId, categoryId, sortKey, range]);
 
   const activeFilters =
     (status !== ALL ? 1 : 0) +
-    (priority !== ALL ? 1 : 0) +
     (projectId !== ALL ? 1 : 0) +
     (categoryId !== ALL ? 1 : 0);
 
   const resetFilters = () => {
     setStatus(ALL);
-    setPriority(ALL);
     setProjectId(ALL);
     setCategoryId(ALL);
     setQuery("");
@@ -163,20 +177,23 @@ export function TasksWorkspace() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <FilterSelect
+            value={period}
+            onChange={(value) => setPeriod(value as PeriodKey)}
+            placeholder="Period"
+          >
+            {PERIODS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </FilterSelect>
+
           <FilterSelect value={status} onChange={setStatus} placeholder="Status">
             <SelectItem value={ALL}>All statuses</SelectItem>
             {TASK_STATUSES.map((value) => (
               <SelectItem key={value} value={value}>
                 {TASK_STATUS_LABELS[value]}
-              </SelectItem>
-            ))}
-          </FilterSelect>
-
-          <FilterSelect value={priority} onChange={setPriority} placeholder="Priority">
-            <SelectItem value={ALL}>All priorities</SelectItem>
-            {TASK_PRIORITIES.map((value) => (
-              <SelectItem key={value} value={value}>
-                {TASK_PRIORITY_LABELS[value]}
               </SelectItem>
             ))}
           </FilterSelect>

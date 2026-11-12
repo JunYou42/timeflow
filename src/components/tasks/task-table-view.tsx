@@ -51,6 +51,7 @@ export function TaskTableView({
             <TableHead className="hidden lg:table-cell">Project</TableHead>
             <TableHead className="hidden lg:table-cell">Category</TableHead>
             <TableHead className="hidden sm:table-cell">Due</TableHead>
+            <TableHead className="hidden sm:table-cell">Completed</TableHead>
             <TableHead className="hidden xl:table-cell">Estimate</TableHead>
             <TableHead>Tracked</TableHead>
             <TableHead className="hidden xl:table-cell">Progress</TableHead>
@@ -110,8 +111,11 @@ export function TaskTableView({
                 <TableCell className={overdue ? "hidden text-destructive sm:table-cell" : "hidden text-muted-foreground sm:table-cell"}>
                   {task.due_date ? formatDateLabel(task.due_date, timezone) : "—"}
                 </TableCell>
+                <TableCell className="hidden text-muted-foreground sm:table-cell">
+                  {task.completed_at ? formatDateLabel(task.completed_at, timezone) : "—"}
+                </TableCell>
                 <TableCell className="hidden xl:table-cell text-muted-foreground tabular-nums">
-                  {task.estimated_minutes ? `${task.estimated_minutes}m` : "—"}
+                  {task.estimated_minutes ? formatDuration(minutesToSeconds(task.estimated_minutes)) : "—"}
                 </TableCell>
                 <TableCell className="tabular-nums">
                   {task.actual_seconds > 0 ? formatDuration(task.actual_seconds) : "—"}

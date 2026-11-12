@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, GripVertical, ListTree, Timer } from "lucide-react";
+import { CalendarDays, CheckCircle2, GripVertical, ListTree, Timer } from "lucide-react";
 import { toast } from "sonner";
 
 import { CategoryDot, TaskPriorityBadge } from "@/components/tasks/task-meta";
@@ -150,6 +150,12 @@ export function TaskBoardView({
                       <span className={cn("flex items-center gap-1", overdue && "text-destructive")}>
                         <CalendarDays className="size-3" />
                         {formatDateLabel(task.due_date, timezone)}
+                      </span>
+                    ) : null}
+                    {task.completed_at ? (
+                      <span className="flex items-center gap-1" title="Completed">
+                        <CheckCircle2 className="size-3" />
+                        {formatDateLabel(task.completed_at, timezone)}
                       </span>
                     ) : null}
                     {task.actual_seconds > 0 ? (

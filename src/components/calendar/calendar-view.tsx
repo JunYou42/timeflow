@@ -11,7 +11,7 @@ import { CalendarPlus, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/layout/page-header";
-import { CategoryPlanActual } from "@/components/analytics/category-plan-actual";
+import { PlanActualByCategory } from "@/components/analytics/plan-actual-by-category";
 import { ScheduleDialog } from "@/components/calendar/schedule-dialog";
 import type { ScheduleDialogDefaults } from "@/components/calendar/schedule-dialog";
 import { ScheduleDuplicateDialog } from "@/components/calendar/schedule-duplicate-dialog";
@@ -249,8 +249,8 @@ export function CalendarView() {
         }
       />
 
-      <CategoryPlanActual
-        rows={categoryRows}
+      <PlanActualByCategory
+        groups={categoryRows}
         rangeLabel={`${formatDateLabel(range.start, timezone)} → ${formatDateLabel(
           new Date(range.end.getTime() - 1),
           timezone
@@ -317,13 +317,18 @@ export function CalendarView() {
             headerToolbar={false}
             firstDay={1}
             // Bounded height: the grid scrolls inside this box, so its toolbar
-            // and the day header row stay put while the hours scroll past.
-            height="calc(100vh - 24rem)"
+            // and the day header row stay put while the hours scroll past. The
+            // 1.3 factor stretches it past the fold -- the added hours are worth
+            // the page scroll they bring.
+            height="calc((100vh - 24rem) * 1.2)"
             nowIndicator
             editable
             selectable
             droppable
             dayMaxEvents={3}
+            // A schedule always carries a start and an end, so the all-day row
+            // would only ever sit empty above the hours.
+            allDaySlot={false}
             slotMinTime="05:00:00"
             slotMaxTime="24:00:00"
             scrollTime="08:00:00"

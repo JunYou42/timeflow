@@ -47,6 +47,7 @@ export const taskFormSchema = z.object({
   status: z.enum(TASK_STATUSES as [string, ...string[]]),
   priority: z.enum(TASK_PRIORITIES as [string, ...string[]]),
   due_date: optionalDateTime,
+  completed_at: optionalDateTime,
   estimated_minutes: optionalWholeNumber,
 });
 export type TaskFormValues = z.infer<typeof taskFormSchema>;
