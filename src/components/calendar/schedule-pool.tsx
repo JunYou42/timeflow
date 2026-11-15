@@ -49,7 +49,9 @@ export function SchedulePool({
 
     const taskItems: PoolItem[] = tasks
       .filter(
-        (task) => !task.deleted_at && (task.status === "todo" || task.status === "in_progress")
+        (task) =>
+          !task.deleted_at &&
+          (task.status === "todo" || task.status === "in_progress" || task.status === "routine")
       )
       .sort((a, b) => {
         const aDue = a.due_date ? new Date(a.due_date).getTime() : Number.MAX_SAFE_INTEGER;

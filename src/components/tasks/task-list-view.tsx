@@ -17,7 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { describeError, useAppStore } from "@/store/use-app-store";
 
-const STATUS_ORDER: TaskStatus[] = ["in_progress", "todo", "done", "cancelled"];
+const STATUS_ORDER: TaskStatus[] = ["in_progress", "todo", "done", "routine", "cancelled"];
 
 interface ProjectGroup {
   key: string;

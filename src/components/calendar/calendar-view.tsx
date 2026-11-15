@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { useUserTimezone } from "@/hooks/use-user-timezone";
 import { buildCategoryPlanVsActual } from "@/lib/stats";
 import {
+  formatCalendarRangeTitle,
   formatDateLabel,
   formatDateTimeLabel,
   resolveRange,
@@ -106,6 +107,18 @@ export function CalendarView() {
       }),
     [schedules, tasksById, projectsById, categoryColors]
   );
+
+  // Read the title straight off the calendar API after every navigation.
+  // `datesSet` sometimes fires with the previous view's dates on the same
+  // tick, so deriving it from the live API keeps the label in step with the
+  // grid.
+  const syncTitleFromApi = useCallback(() => {
+    const api = calendarRef.current?.getApi();
+    if (!api) return;
+    setTitle(
+      formatCalendarRangeTitle(api.view.currentStart, api.view.currentEnd, timezone, api.view.type)
+    );
+  }, [timezone]);
 
   const openCreate = useCallback((start: Date, end: Date) => {
     setEditing(null);
@@ -244,7 +257,10 @@ export function CalendarView() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => calendarRef.current?.getApi().prev()}
+              onClick={() => {
+                calendarRef.current?.getApi().prev();
+                syncTitleFromApi();
+              }}
               aria-label="Previous period"
             >
               <ChevronLeft className="size-4" />
@@ -252,14 +268,20 @@ export function CalendarView() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => calendarRef.current?.getApi().today()}
+              onClick={() => {
+                calendarRef.current?.getApi().today();
+                syncTitleFromApi();
+              }}
             >
               Today
             </Button>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => calendarRef.current?.getApi().next()}
+              onClick={() => {
+                calendarRef.current?.getApi().next();
+                syncTitleFromApi();
+              }}
               aria-label="Next period"
             >
               <ChevronRight className="size-4" />
@@ -279,7 +301,10 @@ export function CalendarView() {
                   variant="ghost"
                   size="sm"
                   className="h-8 px-2 text-xs"
-                  onClick={() => calendarRef.current?.getApi().changeView(item.view)}
+                  onClick={() => {
+                    calendarRef.current?.getApi().changeView(item.view);
+                    syncTitleFromApi();
+                  }}
                 >
                   {item.label}
                 </Button>
@@ -318,7 +343,11 @@ export function CalendarView() {
             eventDrop={handleEventDrop}
             eventResize={handleEventResize}
             datesSet={(arg) => {
-              setTitle(arg.view.title);
+              // `arg.start`/`arg.end` are the *visible* range, which for the
+              // month view reaches into the neighbouring months. The label
+              // describes the period itself, so it is read off the view's
+              // current range.
+              syncTitleFromApi();
               // Keep the same Date objects when the period has not moved, so the
               // summary above is not recomputed on every render.
               setRange((previous) =>
@@ -328,6 +357,7 @@ export function CalendarView() {
                   : { start: arg.start, end: arg.end }
               );
             }}
+            viewDidMount={() => syncTitleFromApi()}
             eventContent={(arg) => {
               const taskId = arg.event.extendedProps.taskId as string | null;
               const projectId = arg.event.extendedProps.projectId as string | null;

@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useRef, useState } from "react";
 import { BarChart3, CheckCircle2, Clock3, Target } from "lucide-react";
+import { toast } from "sonner";
 
 import {
-  CategoryDonut,
-  CategoryLegend,
+  CategoryRadarChart,
   DailyTrendChart,
   PlannedVsActualChart,
 } from "@/components/analytics/charts";
@@ -30,22 +30,23 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useUserTimezone } from "@/hooks/use-user-timezone";
 import {
-  buildCategoryAccuracy,
+  buildCategoryEffort,
   buildDailyTrend,
   buildPlannedVsActual,
-  buildTaskAccuracy,
+  buildProjectAccuracy,
   buildTaskCompletionStats,
   entriesWithinRange,
-  groupSecondsByCategory,
+  isUpcomingProject,
   schedulesWithinRange,
   sumSeconds,
+  type ProjectEstimateRow,
 } from "@/lib/stats";
 import { formatDuration, resolveRange, type RangePreset } from "@/lib/time";
+import type { UUID } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/store/use-app-store";
+import { describeError, useAppStore } from "@/store/use-app-store";
 
 export function AnalyticsWorkspace() {
   const timezone = useUserTimezone();
@@ -53,6 +54,8 @@ export function AnalyticsWorkspace() {
   const schedules = useAppStore((state) => state.schedules);
   const tasks = useAppStore((state) => state.tasks);
   const categories = useAppStore((state) => state.categories);
+  const projects = useAppStore((state) => state.projects);
+  const updateProject = useAppStore((state) => state.updateProject);
 
   const [preset, setPreset] = useState<RangePreset>("week");
   const [customStart, setCustomStart] = useState("");
@@ -71,6 +74,14 @@ export function AnalyticsWorkspace() {
   const entries = useMemo(() => entriesWithinRange(timeEntries, range), [timeEntries, range]);
   const rangeSchedules = useMemo(() => schedulesWithinRange(schedules, range), [schedules, range]);
 
+  // Long-term projects are estimated per week, and that column is judged on the
+  // current week rather than on whatever range the page is showing.
+  const weekRange = useMemo(() => resolveRange("week", timezone), [timezone]);
+  const weekEntries = useMemo(
+    () => entriesWithinRange(timeEntries, weekRange),
+    [timeEntries, weekRange]
+  );
+
   const actualSeconds = useMemo(() => sumSeconds(entries), [entries]);
   const plannedSeconds = useMemo(
     () =>
@@ -88,18 +99,37 @@ export function AnalyticsWorkspace() {
     [rangeSchedules]
   );
 
-  const slices = useMemo(() => groupSecondsByCategory(entries, categories), [entries, categories]);
+  const categoryEffort = useMemo(
+    () => buildCategoryEffort(tasks, schedules, timeEntries, projects, categories, range),
+    [tasks, schedules, timeEntries, projects, categories, range]
+  );
   const daily = useMemo(() => buildDailyTrend(entries, range, timezone), [entries, range, timezone]);
   const plannedVsActual = useMemo(
     () => buildPlannedVsActual(rangeSchedules, entries, range, timezone),
     [rangeSchedules, entries, range, timezone]
   );
-  const taskAccuracy = useMemo(() => buildTaskAccuracy(tasks, timeEntries), [tasks, timeEntries]);
-  const categoryAccuracy = useMemo(
-    () => buildCategoryAccuracy(tasks, timeEntries, categories),
-    [tasks, timeEntries, categories]
-  );
   const completion = useMemo(() => buildTaskCompletionStats(tasks), [tasks]);
+  const projectAccuracy = useMemo(
+    () => buildProjectAccuracy(projects, tasks, timeEntries, weekEntries),
+    [projects, tasks, timeEntries, weekEntries]
+  );
+  // Rows are sorted with the not-yet-started projects last, so a single divider
+  // in front of the first one separates the two groups.
+  const upcomingIndex = useMemo(
+    () => projectAccuracy.findIndex((row) => isUpcomingProject(row)),
+    [projectAccuracy]
+  );
+
+  const saveProjectEstimate = useCallback(
+    async (projectId: UUID, estimatedHours: number | null) => {
+      try {
+        await updateProject(projectId, { estimated_hours: estimatedHours });
+      } catch (error) {
+        toast.error("Could not save the estimate", { description: describeError(error) });
+      }
+    },
+    [updateProject]
+  );
 
   const plannedSecondsInRange = plannedSeconds;
 
@@ -177,17 +207,16 @@ export function AnalyticsWorkspace() {
         />
       ) : (
         <>
-          <div className="grid gap-6 lg:grid-cols-3">
-            <div className="rounded-lg border bg-background p-5 lg:col-span-2">
+          {/* The radar needs elbow room for its category labels, so the two
+              charts share the row instead of the bar chart taking two thirds. */}
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-lg border bg-background p-5">
               <h2 className="mb-4 text-sm font-semibold">Tracked vs planned hours</h2>
               <PlannedVsActualChart data={plannedVsActual} />
             </div>
             <div className="rounded-lg border bg-background p-5">
               <h2 className="mb-4 text-sm font-semibold">Time by category</h2>
-              <CategoryDonut data={slices} />
-              <div className="mt-4">
-                <CategoryLegend data={slices} />
-              </div>
+              <CategoryRadarChart data={categoryEffort} />
             </div>
           </div>
 
@@ -195,117 +224,197 @@ export function AnalyticsWorkspace() {
             <h2 className="mb-4 text-sm font-semibold">Daily tracked hours</h2>
             <DailyTrendChart data={daily} />
           </div>
-
-          <Tabs defaultValue="tasks">
-            <TabsList>
-              <TabsTrigger value="tasks">Estimation by task</TabsTrigger>
-              <TabsTrigger value="categories">Estimation by category</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="tasks" className="mt-4">
-              {taskAccuracy.length === 0 ? (
-                <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-                  No tasks with an estimate or tracked time yet.
-                </p>
-              ) : (
-                <div className="rounded-lg border bg-background">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="min-w-[200px]">Task</TableHead>
-                        <TableHead>Estimated</TableHead>
-                        <TableHead>Actual</TableHead>
-                        <TableHead>Ratio</TableHead>
-                        <TableHead className="hidden sm:table-cell">Variance</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {taskAccuracy.map((row) => (
-                        <TableRow key={row.taskId}>
-                          <TableCell className="truncate font-medium">{row.title}</TableCell>
-                          <TableCell className="tabular-nums text-muted-foreground">
-                            {row.estimatedSeconds > 0 ? formatDuration(row.estimatedSeconds) : "—"}
-                          </TableCell>
-                          <TableCell className="tabular-nums">{formatDuration(row.actualSeconds)}</TableCell>
-                          <TableCell>
-                            {row.ratio === null ? (
-                              <span className="text-xs text-muted-foreground">No estimate</span>
-                            ) : (
-                              <div className="flex items-center gap-2">
-                                <Progress
-                                  value={Math.min(100, Math.round(row.ratio * 100))}
-                                  className={cn(
-                                    row.status === "over" && "bg-red-100 [&>div]:bg-red-500",
-                                    row.status === "under" && "bg-emerald-100 [&>div]:bg-emerald-500"
-                                  )}
-                                />
-                                <span className="w-12 text-right text-xs tabular-nums text-muted-foreground">
-                                  {row.ratio}×
-                                </span>
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell">
-                            <AccuracyBadge status={row.status} />
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="categories" className="mt-4">
-              <div className="rounded-lg border bg-background">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="min-w-[180px]">Category</TableHead>
-                      <TableHead>Estimated</TableHead>
-                      <TableHead>Actual</TableHead>
-                      <TableHead>Ratio</TableHead>
-                      <TableHead className="hidden sm:table-cell">Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {categoryAccuracy.map((row) => (
-                      <TableRow key={row.categoryId}>
-                        <TableCell>
-                          <span className="flex items-center gap-2 font-medium">
-                            <span
-                              className="size-2.5 rounded-full"
-                              style={{ backgroundColor: row.color }}
-                            />
-                            {row.name}
-                          </span>
-                        </TableCell>
-                        <TableCell className="tabular-nums text-muted-foreground">
-                          {row.estimatedSeconds > 0 ? formatDuration(row.estimatedSeconds) : "—"}
-                        </TableCell>
-                        <TableCell className="tabular-nums">{formatDuration(row.actualSeconds)}</TableCell>
-                        <TableCell className="tabular-nums">
-                          {row.ratio === null ? (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          ) : (
-                            `${row.ratio}×`
-                          )}
-                        </TableCell>
-                        <TableCell className="hidden sm:table-cell">
-                          <AccuracyBadge
-                            status={!row.ratio ? "unknown" : row.ratio > 1.05 ? "over" : row.ratio < 0.95 ? "under" : "on"}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </TabsContent>
-          </Tabs>
         </>
       )}
+
+      <div className="rounded-lg border bg-background">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5">
+          <h2 className="text-sm font-semibold">Estimated by project</h2>
+          <span className="text-xs text-muted-foreground">Click an estimate to change it</span>
+        </div>
+        {projectAccuracy.length === 0 ? (
+          <p className="px-5 py-10 text-center text-sm text-muted-foreground">
+            No project has an estimate or tracked time yet.
+          </p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="min-w-[200px]">Project</TableHead>
+                <TableHead>Estimated</TableHead>
+                <TableHead>Actual</TableHead>
+                <TableHead>Ratio</TableHead>
+                <TableHead className="hidden sm:table-cell">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {projectAccuracy.map((row, index) => (
+                <Fragment key={row.projectId}>
+                  {index === upcomingIndex ? (
+                    <TableRow className="border-none hover:bg-transparent">
+                      <TableCell
+                        colSpan={5}
+                        className="border-t-2 border-dashed border-muted-foreground/30 bg-muted/40 py-2 text-xs font-medium text-muted-foreground"
+                      >
+                        Upcoming · starts later
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                  <TableRow>
+                    <TableCell>
+                      <span className="flex items-center gap-2 font-medium">
+                        <span
+                          className="size-2.5 rounded-full"
+                          style={{ backgroundColor: row.color }}
+                        />
+                        {row.name}
+                        {row.endDate === null ? (
+                          <Badge
+                            variant="outline"
+                            className="border-transparent bg-muted px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
+                          >
+                            Long-term · per week
+                          </Badge>
+                        ) : null}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <ProjectEstimateCell row={row} onSave={saveProjectEstimate} />
+                    </TableCell>
+                    <TableCell
+                      className="tabular-nums"
+                      title={
+                        row.endDate === null
+                          ? "Everything tracked on this project so far"
+                          : undefined
+                      }
+                    >
+                      {formatDuration(row.actualSeconds)}
+                    </TableCell>
+                    <TableCell
+                      title={
+                        row.endDate === null
+                          ? "This week's tracked time ÷ the weekly estimate"
+                          : undefined
+                      }
+                    >
+                      {row.ratio === null ? (
+                        <span className="text-xs text-muted-foreground">No estimate</span>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <Progress
+                            value={Math.min(100, Math.round(row.ratio * 100))}
+                            className={cn(
+                              row.status === "over" && "bg-red-100 [&>div]:bg-red-500",
+                              row.status === "under" && "bg-emerald-100 [&>div]:bg-emerald-500"
+                            )}
+                          />
+                          <span className="w-12 text-right text-xs tabular-nums text-muted-foreground">
+                            {row.ratio}×
+                          </span>
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">
+                      <AccuracyBadge status={row.status} />
+                    </TableCell>
+                  </TableRow>
+                </Fragment>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
     </div>
+  );
+}
+
+/** Stored hours, rounded the same way the estimate is written back. */
+function estimateHours(seconds: number | null): number | null {
+  if (seconds === null) return null;
+  return Math.round((seconds / 3600) * 100) / 100;
+}
+
+interface ProjectEstimateCellProps {
+  row: ProjectEstimateRow;
+  onSave: (projectId: UUID, estimatedHours: number | null) => Promise<void>;
+}
+
+/**
+ * The project's estimate, edited in place: clicking the figure turns it into a
+ * field, Enter or clicking away stores it, Escape abandons the change.
+ */
+function ProjectEstimateCell({ row, onSave }: ProjectEstimateCellProps) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  // Enter fires a save and the ensuing unmount fires blur as well; the flag
+  // keeps the second one from writing the same value twice.
+  const committed = useRef(false);
+
+  const startEditing = () => {
+    const hours = estimateHours(row.estimatedSeconds);
+    setValue(hours === null ? "" : String(hours));
+    committed.current = false;
+    setEditing(true);
+  };
+
+  const commit = () => {
+    if (committed.current) return;
+    committed.current = true;
+    setEditing(false);
+
+    const trimmed = value.trim();
+    if (trimmed && !/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+      toast.error("Estimate must be a number of hours, e.g. 1.5");
+      return;
+    }
+    const hours = trimmed ? Math.round(Number.parseFloat(trimmed) * 100) / 100 : null;
+    if (hours === estimateHours(row.estimatedSeconds)) return;
+    void onSave(row.projectId, hours);
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={startEditing}
+        title="Click to edit the estimate"
+        className="rounded px-1.5 py-0.5 text-left tabular-nums text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        {row.estimatedSeconds === null ? (
+          <span className="text-xs">Set estimate</span>
+        ) : (
+          <>
+            {formatDuration(row.estimatedSeconds)}
+            {row.endDate === null ? (
+              <span className="text-[10px] text-muted-foreground/70">/wk</span>
+            ) : null}
+          </>
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <Input
+      autoFocus
+      inputMode="decimal"
+      value={value}
+      onChange={(event) => setValue(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          committed.current = true;
+          setEditing(false);
+        }
+      }}
+      className="h-7 w-20 text-xs"
+      aria-label={`Estimated hours for ${row.name}`}
+    />
   );
 }
 

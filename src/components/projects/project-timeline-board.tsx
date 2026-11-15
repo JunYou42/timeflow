@@ -219,7 +219,7 @@ function fitScale(spanDays: number): ScaleKey {
 /** Minutes -> "2h 30m"; blank stays blank so the row collapses cleanly. */
 function formatMinutes(minutes: number | null): string | null {
   if (minutes == null || minutes <= 0) return null;
-  return formatDuration(minutes * 60, { compact: true });
+  return formatDuration(minutes * 60);
 }
 
 /** Hours -> "40h" / "1.5h"; blank stays blank so the row collapses cleanly. */
@@ -655,7 +655,7 @@ export function ProjectTimelineBoard({
                         </span>
                       ) : null}
                       {project.actual_seconds > 0 ? (
-                        <span>{formatDuration(project.actual_seconds, { compact: true })} tracked</span>
+                        <span>{formatDuration(project.actual_seconds)} tracked</span>
                       ) : null}
                     </div>
                   ) : null}

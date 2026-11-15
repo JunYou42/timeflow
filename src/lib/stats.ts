@@ -18,6 +18,7 @@ import {
 import { projectQuadrant } from "@/lib/types";
 import type {
   Category,
+  ISODateTime,
   Project,
   ProjectQuadrant,
   ProjectWithStats,
@@ -388,6 +389,293 @@ export function buildCategoryPlanVsActual(
     .sort(bySize);
 }
 
+export interface CategoryEffortRow {
+  categoryId: UUID | "uncategorized";
+  name: string;
+  color: string;
+  /** What the category was estimated at for the period. */
+  estimatedSeconds: number;
+  plannedSeconds: number;
+  trackedSeconds: number;
+}
+
+/**
+ * Per-category effort seen from three angles: what the category was estimated
+ * at, what was planned for the period, and what was tracked.
+ *
+ * Estimates live on the project -- see `projectEstimateRows` -- and only a
+ * project that carries none of its own passes the question down to its tasks,
+ * so work that was estimated once is never counted twice. A project's estimate
+ * is a weekly figure, so it is stretched across however many weeks the range
+ * covers; task estimates are whole-task figures and are counted as they are.
+ *
+ * Plan and tracked time are clipped to `range`, and every record reaches a
+ * category through its project first and falls back to its own -- or its
+ * task's -- category, which is the rule `buildCategoryPlanVsActual` follows.
+ */
+export function buildCategoryEffort(
+  tasks: Task[],
+  schedules: Schedule[],
+  entries: TimeEntry[],
+  projects: Project[],
+  categories: Category[],
+  range: DateRange
+): CategoryEffortRow[] {
+  const categoryById = new Map(categories.map((category) => [category.id, category]));
+  const projectById = new Map(projects.map((project) => [project.id, project]));
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const rows = new Map<string, CategoryEffortRow>();
+
+  const ensure = (categoryId: UUID | null): CategoryEffortRow => {
+    const key = categoryId && categoryById.has(categoryId) ? categoryId : "uncategorized";
+    const existing = rows.get(key);
+    if (existing) return existing;
+    const category = categoryById.get(key);
+    const row: CategoryEffortRow = {
+      categoryId: (category?.id ?? "uncategorized") as UUID | "uncategorized",
+      name: category?.name ?? "Uncategorized",
+      color: category?.color ?? "#cbd5e1",
+      estimatedSeconds: 0,
+      plannedSeconds: 0,
+      trackedSeconds: 0,
+    };
+    rows.set(key, row);
+    return row;
+  };
+
+  /** The project's category wins; the fallback is used only when there is none. */
+  const categoryFor = (projectId: UUID | null, fallback: UUID | null): UUID | null =>
+    (projectId ? projectById.get(projectId)?.category_id ?? null : null) ?? fallback;
+
+  const clip = (start: string, end: string): number => {
+    const from = Math.max(toDate(start).getTime(), range.start.getTime());
+    const to = Math.min(toDate(end).getTime(), range.end.getTime());
+    return to > from ? Math.floor((to - from) / 1000) : 0;
+  };
+
+  // Everything a project has tracked, read the way `projectEstimateRows` reads
+  // it: an entry that names a task is attributed through the task, so a project
+  // is never credited twice for the same hour. For the estimate we only care
+  // about what was recorded before the range starts -- time logged inside the
+  // range must not shrink the estimate for that same range.
+  const actualByProject = new Map<UUID, number>();
+  const preRangeActualByProject = new Map<UUID, number>();
+  const rangeStartMs = range.start.getTime();
+  const projectByTaskId = new Map(tasks.map((task) => [task.id, task.project_id]));
+  for (const entry of entries) {
+    const projectId = entry.task_id
+      ? projectByTaskId.get(entry.task_id) ?? null
+      : entry.project_id;
+    if (!projectId) continue;
+    const seconds = entry.duration_seconds || 0;
+    actualByProject.set(projectId, (actualByProject.get(projectId) ?? 0) + seconds);
+    if (toDate(entry.start_at).getTime() < rangeStartMs) {
+      preRangeActualByProject.set(
+        projectId,
+        (preRangeActualByProject.get(projectId) ?? 0) + seconds
+      );
+    }
+  }
+
+  // A project's estimate is a weekly rate, so it has to be stretched to whatever
+  // period is on screen to stay comparable with the plan and tracked bars. Only
+  // projects whose span actually overlaps the selected range contribute -- a
+  // project that has not started yet, or that already finished, has nothing to
+  // say about this range.
+  const rangeWeeks = (range.end.getTime() - range.start.getTime()) / WEEK_MS;
+  const rangeStart = range.start.getTime();
+  const rangeEnd = range.end.getTime();
+  const spansRange = (project: Project): boolean => {
+    const start = project.start_date ? toDate(project.start_date).getTime() : -Infinity;
+    const end = project.end_date ? toDate(project.end_date).getTime() : Infinity;
+    return start < rangeEnd && end > rangeStart;
+  };
+
+  const estimatedProjects = new Set<UUID>();
+  for (const project of projects) {
+    if ((project.estimated_hours ?? 0) > 0) estimatedProjects.add(project.id);
+    if (project.archived_at || !spansRange(project)) continue;
+    const weeklyHours = projectWeeklyTargetHours(
+      { ...project, actual_seconds: actualByProject.get(project.id) ?? 0 },
+      range.start,
+      preRangeActualByProject.get(project.id) ?? 0
+    );
+    if (weeklyHours <= 0) continue;
+    ensure(project.category_id).estimatedSeconds += Math.round(weeklyHours * 3600 * rangeWeeks);
+  }
+
+  for (const task of tasks) {
+    if (task.deleted_at) continue;
+    if (task.project_id && estimatedProjects.has(task.project_id)) continue;
+    ensure(categoryFor(task.project_id, task.category_id)).estimatedSeconds += Math.max(
+      0,
+      (task.estimated_minutes ?? 0) * 60
+    );
+  }
+
+  for (const schedule of schedules) {
+    const seconds = clip(schedule.start_at, schedule.end_at);
+    if (seconds <= 0) continue;
+    const task = schedule.task_id ? taskById.get(schedule.task_id) : undefined;
+    const projectId = schedule.project_id ?? task?.project_id ?? null;
+    ensure(categoryFor(projectId, task?.category_id ?? null)).plannedSeconds += seconds;
+  }
+
+  for (const entry of entries) {
+    const seconds = clip(entry.start_at, entry.end_at);
+    if (seconds <= 0) continue;
+    const task = entry.task_id ? taskById.get(entry.task_id) : undefined;
+    const projectId = entry.project_id ?? task?.project_id ?? null;
+    ensure(categoryFor(projectId, entry.category_id ?? task?.category_id ?? null)).trackedSeconds +=
+      seconds;
+  }
+
+  return [...rows.values()]
+    .filter(
+      (row) => row.estimatedSeconds > 0 || row.plannedSeconds > 0 || row.trackedSeconds > 0
+    )
+    .sort(
+      (a, b) => b.trackedSeconds - a.trackedSeconds || a.name.localeCompare(b.name)
+    );
+}
+
+export interface ProjectPlanActualRow {
+  projectId: UUID;
+  name: string;
+  color: string;
+  plannedSeconds: number;
+  actualSeconds: number;
+  /** Hours this project asks of one week, used as the 100% mark for its bars. */
+  targetSeconds: number;
+}
+
+/**
+ * Planned (scheduled) versus tracked time inside a period, one row per project.
+ *
+ * Only the part of a record that falls inside `range` counts, so a block that
+ * straddles the boundary is clipped rather than inflating one period. Records
+ * that never reach a project are left out -- the question is which project the
+ * time went to, so hours with nothing behind them would only pad the list --
+ * and the busiest project comes first.
+ *
+ * Every project active during the period that has an estimate is listed, even
+ * when nothing was scheduled for it, so the panel shows the whole field rather
+ * than only the projects that happened to get time. Each row carries the
+ * project's weekly target so its bars can be read against its own estimate.
+ */
+export function buildProjectPlanVsActual(
+  schedules: Schedule[],
+  entries: TimeEntry[],
+  tasks: Task[],
+  projects: Array<Project & { actual_seconds: number }>,
+  range: DateRange,
+  now: Date = new Date()
+): ProjectPlanActualRow[] {
+  const projectById = new Map(projects.map((project) => [project.id, project]));
+  const projectByTask = new Map(tasks.map((task) => [task.id, task.project_id]));
+  const rows = new Map<UUID, ProjectPlanActualRow>();
+
+  // For each project, the time recorded before the range starts is what the
+  // short-term estimate subtracts -- anything logged inside the range must not
+  // reduce the target for that same range.
+  const preRangeActualByProject = new Map<UUID, number>();
+  const rangeStartMs = range.start.getTime();
+  for (const entry of entries) {
+    const projectId = entry.project_id ?? (entry.task_id ? projectByTask.get(entry.task_id) ?? null : null);
+    if (!projectId) continue;
+    if (toDate(entry.start_at).getTime() < rangeStartMs) {
+      preRangeActualByProject.set(
+        projectId,
+        (preRangeActualByProject.get(projectId) ?? 0) + (entry.duration_seconds || 0)
+      );
+    }
+  }
+
+  const targetSecondsFor = (project: (typeof projects)[number]): number =>
+    projectWeeklyTargetHours(project, now, preRangeActualByProject.get(project.id) ?? 0) * 3600;
+
+  const overlapSeconds = (start: string, end: string): number => {
+    const from = Math.max(toDate(start).getTime(), range.start.getTime());
+    const to = Math.min(toDate(end).getTime(), range.end.getTime());
+    return to > from ? Math.floor((to - from) / 1000) : 0;
+  };
+
+  const accumulate = (
+    records: Array<Pick<Schedule, "project_id" | "task_id" | "start_at" | "end_at">>,
+    field: "plannedSeconds" | "actualSeconds"
+  ) => {
+    for (const record of records) {
+      // A record reaches a project through its own `project_id` or the one
+      // behind its task, the same way the category breakdown resolves it.
+      const projectId =
+        record.project_id ?? (record.task_id ? projectByTask.get(record.task_id) ?? null : null);
+      const project = projectId ? projectById.get(projectId) : undefined;
+      if (!project) continue;
+
+      const seconds = overlapSeconds(record.start_at, record.end_at);
+      if (seconds <= 0) continue;
+
+      let row = rows.get(project.id);
+      if (!row) {
+        row = {
+          projectId: project.id,
+          name: project.name,
+          color: project.color,
+          plannedSeconds: 0,
+          actualSeconds: 0,
+          // The 100% mark for this row's bars: the hours the project asks of
+          // one week, read the same way `buildWeeklyWorkload` reads it.
+          targetSeconds: targetSecondsFor(project),
+        };
+        rows.set(project.id, row);
+      }
+      row[field] += seconds;
+    }
+  };
+
+  accumulate(schedules, "plannedSeconds");
+  accumulate(entries, "actualSeconds");
+
+  // A project whose window covers the period belongs on the chart even when
+  // nothing was scheduled or tracked for it yet -- the panel is meant to show
+  // every project that was in flight, not only the ones with time on them. An
+  // open-ended project counts as in flight for any period from its start.
+  const overlaps = (project: (typeof projects)[number]): boolean => {
+    const start = project.start_date ? toDate(project.start_date).getTime() : -Infinity;
+    const end = project.end_date ? toDate(project.end_date).getTime() : Infinity;
+    return start < range.end.getTime() && end > range.start.getTime();
+  };
+
+  for (const project of projects) {
+    if (project.archived_at || rows.has(project.id) || !overlaps(project)) continue;
+    rows.set(project.id, {
+      projectId: project.id,
+      name: project.name,
+      color: project.color,
+      plannedSeconds: 0,
+      actualSeconds: 0,
+      targetSeconds: targetSecondsFor(project),
+    });
+  }
+
+  // A row earns its place as soon as it has anything to say: a weekly estimate,
+  // scheduled time, or tracked time. Only a project that is quiet on all three
+  // counts -- the ones picked up solely for overlapping the window -- is left
+  // out, so the panel never pads itself with empty rows.
+  return [...rows.values()]
+    .filter(
+      (row) =>
+        (projectById.get(row.projectId)?.estimated_hours ?? 0) > 0 ||
+        row.plannedSeconds > 0 ||
+        row.actualSeconds > 0
+    )
+    .sort(
+      (a, b) =>
+        b.actualSeconds + b.plannedSeconds - (a.actualSeconds + a.plannedSeconds) ||
+        a.name.localeCompare(b.name)
+    );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Task metrics                                                                */
 /* -------------------------------------------------------------------------- */
@@ -409,11 +697,11 @@ export function buildTaskCompletionStats(
   const completed = active.filter((task) => task.status === "done").length;
   const cancelled = active.filter((task) => task.status === "cancelled").length;
   const pending = active.filter(
-    (task) => task.status === "todo" || task.status === "in_progress"
+    (task) => task.status === "todo" || task.status === "in_progress" || task.status === "routine"
   ).length;
   const overdue = active.filter(
     (task) =>
-      (task.status === "todo" || task.status === "in_progress") &&
+      (task.status === "todo" || task.status === "in_progress" || task.status === "routine") &&
       task.due_date !== null &&
       toDate(task.due_date) < now
   ).length;
@@ -577,6 +865,10 @@ export interface ProjectEstimateRow {
   projectId: UUID;
   name: string;
   color: string;
+  /** Null when the start date has not been decided, so the project already runs. */
+  startDate: ISODateTime | null;
+  /** Null for an open-ended project, whose estimate reads as a weekly figure. */
+  endDate: ISODateTime | null;
   /** Hand-written estimate in seconds, or null when the project has none. */
   estimatedSeconds: number | null;
   actualSeconds: number;
@@ -585,61 +877,61 @@ export interface ProjectEstimateRow {
 }
 
 /**
- * Estimate versus tracked time, one row per project.
+ * Estimate versus tracked time, one row per project handed in.
  *
  * The estimate is the figure typed into the project itself; task estimates are
- * a separate signal and stay on the analytics page. Tracked time covers the
- * whole project -- booked straight against it or against one of its tasks -- so
- * both sides of the comparison span the same ground.
+ * a separate signal and stay on their own table. Tracked time covers the whole
+ * project -- booked straight against it or against one of its tasks -- so both
+ * sides of the comparison span the same ground.
  *
  * Projects with neither an estimate nor tracked time are dropped: an empty row
- * would only pad the list. Only projects that are under way right now make it
- * in -- one that has ended has nothing left to plan, one that has not started
- * yet is not today's problem, and one with no end date has no finish line for
- * the estimate to aim at.
+ * would only pad the list.
+ *
+ * An open-ended project is judged on the week rather than on its whole life:
+ * its estimate is a weekly figure, so `weekEntries` supplies the time it has
+ * taken inside the current week. Dated projects ignore that and keep comparing
+ * against everything they have tracked.
  */
-export function buildProjectEstimateAccuracy(
+function projectEstimateRows(
   projects: Project[],
   tasks: Task[],
   entries: TimeEntry[],
-  now: Date = new Date()
+  weekEntries: TimeEntry[] = []
 ): ProjectEstimateRow[] {
   const projectByTask = new Map(tasks.map((task) => [task.id, task.project_id]));
-  const actualByProject = new Map<UUID, number>();
 
-  for (const entry of entries) {
-    // An entry that names a task is attributed through the task even when it
-    // also carries a project, so nothing is counted twice.
-    const projectId = entry.task_id ? projectByTask.get(entry.task_id) ?? null : entry.project_id;
-    if (!projectId) continue;
-    actualByProject.set(
-      projectId,
-      (actualByProject.get(projectId) ?? 0) + (entry.duration_seconds || 0)
-    );
-  }
+  // An entry that names a task is attributed through the task even when it also
+  // carries a project, so nothing is counted twice.
+  const secondsByProject = (source: TimeEntry[]) => {
+    const totals = new Map<UUID, number>();
+    for (const entry of source) {
+      const projectId = entry.task_id ? projectByTask.get(entry.task_id) ?? null : entry.project_id;
+      if (!projectId) continue;
+      totals.set(projectId, (totals.get(projectId) ?? 0) + (entry.duration_seconds || 0));
+    }
+    return totals;
+  };
 
-  const cutoff = now.getTime();
+  const actualByProject = secondsByProject(entries);
+  const weekByProject = secondsByProject(weekEntries);
 
   return projects
-    .filter((project) => {
-      // Only the projects that are under way right now: one that has finished
-      // has nothing left to plan, and one that has not started is not this
-      // month's problem. A missing start date means it is already running.
-      if (project.end_date === null) return false;
-      if (new Date(project.end_date).getTime() <= cutoff) return false;
-      return project.start_date === null || new Date(project.start_date).getTime() <= cutoff;
-    })
     .map((project) => {
       const estimatedSeconds =
         project.estimated_hours === null
           ? null
           : Math.max(0, Math.round(project.estimated_hours * 3600));
       const actualSeconds = actualByProject.get(project.id) ?? 0;
-      const { ratio, status } = estimationRatio(estimatedSeconds, actualSeconds);
+      // An open-ended project is measured against the week: a lifetime total
+      // would dwarf an estimate that only promises a week's worth of hours.
+      const compared = project.end_date === null ? weekByProject.get(project.id) ?? 0 : actualSeconds;
+      const { ratio, status } = estimationRatio(estimatedSeconds, compared);
       return {
         projectId: project.id,
         name: project.name,
         color: project.color,
+        startDate: project.start_date,
+        endDate: project.end_date,
         estimatedSeconds,
         actualSeconds,
         ratio,
@@ -649,8 +941,63 @@ export function buildProjectEstimateAccuracy(
     .filter((row) => row.estimatedSeconds !== null || row.actualSeconds > 0)
     .sort(
       (a, b) =>
-        (b.estimatedSeconds ?? 0) - (a.estimatedSeconds ?? 0) || b.actualSeconds - a.actualSeconds
+        // Work that has not started yet is parked at the bottom: it has no
+        // story to tell against the projects already under way.
+        Number(isUpcomingProject(a)) - Number(isUpcomingProject(b)) ||
+        (b.estimatedSeconds ?? 0) - (a.estimatedSeconds ?? 0) ||
+        b.actualSeconds - a.actualSeconds
     );
+}
+
+/** Whether a row's project starts after `now`; a missing start date already runs. */
+export function isUpcomingProject(row: ProjectEstimateRow, now: Date = new Date()): boolean {
+  return row.startDate !== null && new Date(row.startDate).getTime() > now.getTime();
+}
+
+/**
+ * Estimate versus tracked time for the projects that are under way right now.
+ *
+ * One that has ended has nothing left to plan, one that has not started yet is
+ * not today's problem, and one with no end date has no finish line for the
+ * estimate to aim at.
+ */
+export function buildProjectEstimateAccuracy(
+  projects: Project[],
+  tasks: Task[],
+  entries: TimeEntry[],
+  now: Date = new Date()
+): ProjectEstimateRow[] {
+  const cutoff = now.getTime();
+  return projectEstimateRows(
+    projects.filter((project) => {
+      // A missing start date means the project is already running.
+      if (project.end_date === null) return false;
+      if (new Date(project.end_date).getTime() <= cutoff) return false;
+      return project.start_date === null || new Date(project.start_date).getTime() <= cutoff;
+    }),
+    tasks,
+    entries
+  );
+}
+
+/**
+ * Estimate versus tracked time for every live project, finished ones included.
+ *
+ * `weekEntries` carries the current week's time, which is what the open-ended
+ * projects are measured against.
+ */
+export function buildProjectAccuracy(
+  projects: Project[],
+  tasks: Task[],
+  entries: TimeEntry[],
+  weekEntries: TimeEntry[] = []
+): ProjectEstimateRow[] {
+  return projectEstimateRows(
+    projects.filter((project) => !project.archived_at),
+    tasks,
+    entries,
+    weekEntries
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -706,6 +1053,85 @@ export function decorateProjectsWithStats(
         (actualByProject.get(project.id) ?? 0),
     };
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Weekly workload                                                             */
+/* -------------------------------------------------------------------------- */
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+export interface WeeklyWorkload {
+  /** Weekly estimates of the open-ended projects, added up. */
+  ongoingHours: number;
+  /** What the dated projects still owe, spread over the weeks they have left. */
+  deadlineHours: number;
+  /** The load this week is asking for, which is the two above added together. */
+  totalHours: number;
+}
+
+/**
+ * How many hours a single project asks of one week.
+ *
+ * A project with no end date has no finish line, so its estimate stands as the
+ * hours it wants every week. A dated one is read as a whole-project figure:
+ * what is left of it -- the estimate minus what has been tracked -- is spread
+ * evenly over the weeks between `now` and its deadline. A project already past
+ * its estimate is treated as spent rather than as credit, so it asks for
+ * nothing. Anything due inside a week, or already overdue, is charged to this
+ * week in full instead of being divided by a fraction of one.
+ */
+export function projectWeeklyTargetHours(
+  project: Project & { actual_seconds: number },
+  now: Date = new Date(),
+  actualSeconds?: number
+): number {
+  const estimate = project.estimated_hours ?? 0;
+
+  if (project.end_date === null) return estimate;
+
+  // For a short-term project the target is the remaining estimate spread over
+  // the weeks it has left. `actualSeconds` lets the caller freeze the baseline
+  // at whatever was recorded before the on-screen range, so the estimate for
+  // that range does not drift as more time is logged inside it. When omitted,
+  // the project's lifetime total is used.
+  const usedHours = (actualSeconds ?? project.actual_seconds) / 3600;
+  const remainingHours = estimate - usedHours;
+  if (remainingHours <= 0) return 0;
+  const weeksLeft = Math.max((new Date(project.end_date).getTime() - now.getTime()) / WEEK_MS, 1);
+  return remainingHours / weeksLeft;
+}
+
+/**
+ * How many hours the week is asking for.
+ *
+ * The per-project targets are read off the very rows the calibration chart
+ * draws, rather than recomputed from the project list: the headline and the
+ * bars then answer the same question, and a project the chart left out -- one
+ * that is not in flight during the week -- is counted by neither. Reading them
+ * from one place is what keeps the two figures equal.
+ */
+export function buildWeeklyWorkload(
+  rows: Array<Pick<ProjectPlanActualRow, "projectId" | "targetSeconds">>,
+  projects: Array<Pick<Project, "id" | "end_date">>
+): WeeklyWorkload {
+  const endDateById = new Map(projects.map((project) => [project.id, project.end_date]));
+
+  let ongoingHours = 0;
+  let deadlineHours = 0;
+
+  for (const row of rows) {
+    const hours = row.targetSeconds / 3600;
+    // An open-ended project carries a weekly figure; a dated one carries what
+    // is left of it spread over the weeks it has left.
+    if (endDateById.get(row.projectId) === null) {
+      ongoingHours += hours;
+    } else {
+      deadlineHours += hours;
+    }
+  }
+
+  return { ongoingHours, deadlineHours, totalHours: ongoingHours + deadlineHours };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -998,6 +1424,6 @@ export function isTimerBlocking(
   return session.task_id !== nextTaskId;
 }
 
-export const STATUS_ORDER: TaskStatus[] = ["todo", "in_progress", "done", "cancelled"];
+export const STATUS_ORDER: TaskStatus[] = ["todo", "in_progress", "done", "routine", "cancelled"];
 
 export { durationBetween };

@@ -68,8 +68,8 @@ export function ProjectEstimateDashboard({
       <CardHeader className="space-y-1 pb-3">
         <CardTitle className="text-sm">项目进度</CardTitle>
         <CardDescription className="text-xs">
-          {formatDuration(estimatedTotal, { compact: true })} estimated ·{" "}
-          {formatDuration(trackedTotal, { compact: true })} tracked
+          {formatDuration(estimatedTotal)} estimated ·{" "}
+          {formatDuration(trackedTotal)} tracked
           {coverage === null ? "" : ` · ${coverage}% of the estimate used`}
         </CardDescription>
       </CardHeader>

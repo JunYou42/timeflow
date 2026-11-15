@@ -5,10 +5,12 @@ import {
   buildCategoryPlanVsActual,
   buildDailyTrend,
   buildPlannedVsActual,
+  buildProjectAccuracy,
   buildProjectEstimateAccuracy,
   buildProjectTimeline,
   buildTaskAccuracy,
   buildTaskCompletionStats,
+  buildWeeklyWorkload,
   decorateProjectsWithStats,
   decorateTasksWithStats,
   entriesWithinRange,
@@ -20,6 +22,7 @@ import {
   planProjectMove,
   planProjectReorder,
   projectTimelineRange,
+  projectWeeklyTargetHours,
   secondsWithinRange,
   sumSeconds,
 } from "@/lib/stats";
@@ -674,6 +677,84 @@ describe("buildProjectEstimateAccuracy", () => {
     const rows = buildProjectEstimateAccuracy([noStart], [], [], NOW);
 
     expect(rows.map((row) => row.name)).toEqual(["Rolling"]);
+  });
+});
+
+describe("buildProjectAccuracy", () => {
+  const NOW = new Date("2026-11-11T00:00:00.000Z");
+
+  it("judges an open-ended project on the week, not on its whole life", () => {
+    const ongoing = makeProject({ estimated_hours: 2 });
+    const dated = makeProject({ estimated_hours: 4, end_date: "2026-12-01T00:00:00.000Z" });
+    const task = makeTask({ project_id: ongoing.id });
+
+    const entries = [
+      // Ten hours in total across the project's life...
+      makeEntry("2026-10-01T09:00:00.000Z", "2026-10-01T19:00:00.000Z", { task_id: task.id }),
+      // ...but only one of them inside the current week.
+      makeEntry("2026-11-11T09:00:00.000Z", "2026-11-11T10:00:00.000Z", {
+        project_id: ongoing.id,
+      }),
+    ];
+
+    const rows = buildProjectAccuracy(
+      [ongoing, dated],
+      [task],
+      entries,
+      entries.slice(1)
+    );
+    const weekly = rows.find((row) => row.projectId === ongoing.id)!;
+
+    expect(weekly.name).toBe(ongoing.name);
+    expect(weekly.actualSeconds).toBe(11 * 3600);
+    // One hour of a two-hour weekly estimate.
+    expect(weekly.ratio).toBe(0.5);
+    expect(weekly.status).toBe("under");
+    // The dated project keeps comparing against its whole life.
+    expect(rows.find((row) => row.projectId === dated.id)?.ratio).toBe(0);
+  });
+});
+
+describe("buildWeeklyWorkload", () => {
+  it("splits the chart's targets into long-term and short-term hours", () => {
+    const ongoing = makeProject({ estimated_hours: 3 });
+    const dated = makeProject({ estimated_hours: 10, end_date: "2026-12-01T00:00:00.000Z" });
+
+    const workload = buildWeeklyWorkload(
+      [
+        { projectId: ongoing.id, targetSeconds: 2 * 3600 },
+        { projectId: dated.id, targetSeconds: 5400 },
+      ],
+      [ongoing, dated]
+    );
+
+    expect(workload).toEqual({ ongoingHours: 2, deadlineHours: 1.5, totalHours: 3.5 });
+  });
+});
+
+describe("projectWeeklyTargetHours", () => {
+  const NOW = new Date("2026-11-11T00:00:00.000Z");
+  const START = "2026-11-01T00:00:00.000Z";
+  const inWeeks = (weeks: number) => new Date(NOW.getTime() + weeks * 7 * 24 * 3600 * 1000).toISOString();
+
+  it("reads an open-ended project as a weekly figure", () => {
+    const ongoing = makeProject({ estimated_hours: 3 });
+
+    expect(projectWeeklyTargetHours({ ...ongoing, actual_seconds: 3600 }, NOW)).toBe(3);
+  });
+
+  it("spreads what a dated project still owes over the weeks it has left", () => {
+    const dated = makeProject({ estimated_hours: 10, start_date: START, end_date: inWeeks(4) });
+    // Two of the ten hours are already tracked, so the other eight go over four weeks.
+    expect(projectWeeklyTargetHours({ ...dated, actual_seconds: 7200 }, NOW)).toBe(2);
+  });
+
+  it("charges a deadline inside the week in full, and a spent estimate not at all", () => {
+    const due = makeProject({ estimated_hours: 4, end_date: inWeeks(0.5) });
+    const spent = makeProject({ estimated_hours: 2, end_date: inWeeks(6) });
+
+    expect(projectWeeklyTargetHours({ ...due, actual_seconds: 0 }, NOW)).toBe(4);
+    expect(projectWeeklyTargetHours({ ...spent, actual_seconds: 3 * 3600 }, NOW)).toBe(0);
   });
 });
 

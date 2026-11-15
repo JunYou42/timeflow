@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { EventClickArg, EventDropArg } from "@fullcalendar/core";
 import type { DateClickArg, EventReceiveArg, EventResizeDoneArg } from "@fullcalendar/interaction";
 import FullCalendar from "@fullcalendar/react";
@@ -11,7 +11,8 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { formatDuration } from "@/lib/time";
+import { useUserTimezone } from "@/hooks/use-user-timezone";
+import { formatCalendarRangeTitle, formatDuration } from "@/lib/time";
 import type { TimeEntry } from "@/lib/types";
 import { describeError, useAppStore } from "@/store/use-app-store";
 
@@ -51,12 +52,25 @@ export function TimeLogsCalendar({
   const tasks = useAppStore((state) => state.tasks);
   const projects = useAppStore((state) => state.projects);
   const categories = useAppStore((state) => state.categories);
+  const timezone = useUserTimezone();
   const updateTimeEntry = useAppStore((state) => state.updateTimeEntry);
   const createTimeEntry = useAppStore((state) => state.createTimeEntry);
 
   const calendarRef = useRef<FullCalendar | null>(null);
   const lastRangeRef = useRef<{ start: number; end: number } | null>(null);
   const [title, setTitle] = useState("");
+
+  // Read the title straight off the calendar API after every navigation.
+  // `datesSet` sometimes fires with the previous view's dates on the same
+  // tick, so deriving it from the live API keeps the label in step with the
+  // grid.
+  const syncTitleFromApi = useCallback(() => {
+    const api = calendarRef.current?.getApi();
+    if (!api) return;
+    setTitle(
+      formatCalendarRangeTitle(api.view.currentStart, api.view.currentEnd, timezone, api.view.type)
+    );
+  }, [timezone]);
 
   const events = useMemo(() => {
     const tasksById = new Map(tasks.map((task) => [task.id, task]));
@@ -181,18 +195,31 @@ export function TimeLogsCalendar({
         <Button
           variant="outline"
           size="sm"
-          onClick={() => calendarRef.current?.getApi().prev()}
+          onClick={() => {
+            calendarRef.current?.getApi().prev();
+            syncTitleFromApi();
+          }}
           aria-label="Previous period"
         >
           <ChevronLeft className="size-4" />
         </Button>
-        <Button variant="outline" size="sm" onClick={() => calendarRef.current?.getApi().today()}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            calendarRef.current?.getApi().today();
+            syncTitleFromApi();
+          }}
+        >
           Today
         </Button>
         <Button
           variant="outline"
           size="sm"
-          onClick={() => calendarRef.current?.getApi().next()}
+          onClick={() => {
+            calendarRef.current?.getApi().next();
+            syncTitleFromApi();
+          }}
           aria-label="Next period"
         >
           <ChevronRight className="size-4" />
@@ -206,7 +233,10 @@ export function TimeLogsCalendar({
               variant="ghost"
               size="sm"
               className="h-8 px-2 text-xs"
-              onClick={() => calendarRef.current?.getApi().changeView(item.view)}
+              onClick={() => {
+                calendarRef.current?.getApi().changeView(item.view);
+                syncTitleFromApi();
+              }}
             >
               {item.label}
             </Button>
@@ -245,13 +275,17 @@ export function TimeLogsCalendar({
         eventDrop={handleEventDrop}
         eventResize={handleEventResize}
         datesSet={(arg) => {
-          setTitle(arg.view.title);
+          // `arg.start`/`arg.end` are the *visible* range, which for the month
+          // view reaches into the neighbouring months. The label describes the
+          // period itself, so it is read off the view's current range.
+          syncTitleFromApi();
           const next = { start: arg.start.getTime(), end: arg.end.getTime() };
           const previous = lastRangeRef.current;
           if (previous && previous.start === next.start && previous.end === next.end) return;
           lastRangeRef.current = next;
           onRangeChange({ start: arg.start, end: arg.end });
         }}
+        viewDidMount={() => syncTitleFromApi()}
         eventContent={(arg) => {
           const categoryName = arg.event.extendedProps.categoryName as string | null;
           const seconds =

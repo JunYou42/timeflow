@@ -56,7 +56,9 @@ export function TaskSelect({
       if (task.deleted_at) return false;
       if (task.id === excludeTaskId) return false;
       if (task.id === value) return true;
-      return task.status === "todo" || task.status === "in_progress";
+      return (
+        task.status === "todo" || task.status === "in_progress" || task.status === "routine"
+      );
     });
     return [...visible]
       .sort((a, b) => {

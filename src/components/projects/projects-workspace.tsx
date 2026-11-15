@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { FolderKanban, Plus } from "lucide-react";
+import { useMemo, useState, type CSSProperties } from "react";
+import { ChevronLeft, ChevronRight, FolderKanban, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/layout/page-header";
@@ -11,15 +11,18 @@ import { ProjectEstimateDashboard } from "@/components/projects/project-estimate
 import { ProjectTimeDashboard } from "@/components/projects/project-time-dashboard";
 import { ProjectTimelineBoard } from "@/components/projects/project-timeline-board";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useUserTimezone } from "@/hooks/use-user-timezone";
 import {
+  buildProjectPlanVsActual,
   buildProjectTimeline,
+  buildWeeklyWorkload,
   decorateProjectsWithStats,
   planProjectReorder,
   projectTimelineRange,
+  type ProjectPlanActualRow,
 } from "@/lib/stats";
-import { formatDuration, formatInTimezone } from "@/lib/time";
+import { addDaysInTimezone, formatDuration, formatInTimezone, resolveRange } from "@/lib/time";
 import {
   PROJECT_QUADRANT_LABELS,
   projectQuadrant,
@@ -46,9 +49,15 @@ export function ProjectsWorkspace() {
   const tasks = useAppStore((state) => state.tasks);
   const categories = useAppStore((state) => state.categories);
   const timeEntries = useAppStore((state) => state.timeEntries);
+  const schedules = useAppStore((state) => state.schedules);
   const updateProject = useAppStore((state) => state.updateProject);
 
   const [dialog, setDialog] = useState<ProjectDialogState>({ open: false, project: null });
+
+  // Which week the load panel below is looking at. 0 is the current one; the
+  // arrows step a week at a time, so the same questions can be asked of any
+  // week and the numbers and bars move together.
+  const [weekOffset, setWeekOffset] = useState(0);
 
   const categoryById = useMemo(
     () => new Map(categories.map((category) => [category.id, category])),
@@ -78,6 +87,34 @@ export function ProjectsWorkspace() {
   const range = useMemo(() => projectTimelineRange(scheduled, timezone), [scheduled, timezone]);
 
   const items = useMemo(() => buildProjectTimeline(scheduled, range), [scheduled, range]);
+
+  // What a week has been given: blocks on the calendar against time actually
+  // booked, project by project. Both sides share the same window so the numbers
+  // and the bars below them tell one story. The reference date also drives the
+  // estimate reading, so stepping weeks re-reads the load from that week's
+  // point of view rather than always from today.
+  const weekRange = useMemo(
+    () => resolveRange("week", timezone, addDaysInTimezone(new Date(), weekOffset * 7, timezone)),
+    [timezone, weekOffset]
+  );
+
+  const weekLoad = useMemo(
+    () => buildProjectPlanVsActual(schedules, timeEntries, tasks, decorated, weekRange, weekRange.start),
+    [schedules, timeEntries, tasks, decorated, weekRange]
+  );
+
+  // The headline estimate is the sum of the very targets the chart below draws,
+  // so the 工期 card and 项目校准 can never disagree about the week.
+  const workload = useMemo(() => buildWeeklyWorkload(weekLoad, projects), [weekLoad, projects]);
+
+  const weekPlannedSeconds = weekLoad.reduce((sum, row) => sum + row.plannedSeconds, 0);
+  const weekActualSeconds = weekLoad.reduce((sum, row) => sum + row.actualSeconds, 0);
+
+  const weekLabel = `${formatInTimezone(weekRange.start, timezone, "MMM d")} – ${formatInTimezone(
+    addDaysInTimezone(weekRange.end, -1, timezone),
+    timezone,
+    "MMM d"
+  )}`;
 
   const quadrantCounts = useMemo(() => {
     const counts: Record<ProjectQuadrant, number> = { do: 0, plan: 0, delegate: 0, drop: 0 };
@@ -143,6 +180,40 @@ export function ProjectsWorkspace() {
         />
       ) : (
         <>
+          {/* The week's three numbers -- what it should cost, what was set
+              aside for it, what it actually took -- gathered into one card so
+              the panel reads as a single answer, with the week picker on its
+              right and the per-project split of the last two beside it. */}
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+            <WeekSummaryCard
+              weekLabel={weekLabel}
+              isCurrentWeek={weekOffset === 0}
+              onStep={(delta) => setWeekOffset((current) => current + delta)}
+              onReset={() => setWeekOffset(0)}
+              metrics={[
+                {
+                  label: "Estimated",
+                  value: formatHours(workload.totalHours),
+                  hint: `${formatHours(workload.ongoingHours)} long-term + ${formatHours(
+                    workload.deadlineHours
+                  )} short-term`,
+                },
+                {
+                  label: "Planned",
+                  value: formatDuration(weekPlannedSeconds),
+                  hint: "Scheduled",
+                },
+                {
+                  label: "Actual",
+                  value: formatDuration(weekActualSeconds),
+                  hint: "Tracked",
+                },
+              ]}
+            />
+
+            <WeekLoadChart rows={weekLoad} />
+          </div>
+
           <Card>
             <CardContent className="flex flex-wrap items-center gap-x-5 gap-y-2 p-3 text-xs">
               {QUADRANT_ORDER.map((quadrant) => (
@@ -153,9 +224,9 @@ export function ProjectsWorkspace() {
                 </span>
               ))}
               <span className="ml-auto text-muted-foreground">
-                Estimated {formatDuration(totals.estimated * 3600, { compact: true })} · Tasks{" "}
-                {formatDuration(totals.taskEstimate * 60, { compact: true })} · Tracked{" "}
-                {formatDuration(totals.actual, { compact: true })}
+                Estimated {formatDuration(totals.estimated * 3600)} · Tasks{" "}
+                {formatDuration(totals.taskEstimate * 60)} · Tracked{" "}
+                {formatDuration(totals.actual)}
               </span>
             </CardContent>
           </Card>
@@ -243,7 +314,7 @@ export function ProjectsWorkspace() {
                             </span>
                           ) : null}
                           {project.actual_seconds > 0 ? (
-                            <span>{formatDuration(project.actual_seconds, { compact: true })} tracked</span>
+                            <span>{formatDuration(project.actual_seconds)} tracked</span>
                           ) : null}
                         </span>
                       </span>
@@ -259,6 +330,199 @@ export function ProjectsWorkspace() {
       <ProjectDialog
         state={dialog}
         onOpenChange={(open) => setDialog((current) => ({ ...current, open }))}
+      />
+    </div>
+  );
+}
+
+/** Hours as a terse figure: "12h", "12.5h". */
+function formatHours(hours: number): string {
+  return `${Math.round(hours * 10) / 10}h`;
+}
+
+interface WeekMetric {
+  label: string;
+  value: string;
+  hint: string;
+}
+
+/**
+ * The week's three headline numbers on one card, with the week picker above
+ * them.
+ *
+ * Splitting these into three separate cards left the row looking thin, so they
+ * share a single surface and read as one answer to "how is the week going":
+ * how much it should cost, how much was set aside, how much it took. The
+ * arrows step a week at a time and a shortcut jumps back to the current one.
+ */
+function WeekSummaryCard({
+  weekLabel,
+  isCurrentWeek,
+  onStep,
+  onReset,
+  metrics,
+}: {
+  weekLabel: string;
+  isCurrentWeek: boolean;
+  onStep: (delta: number) => void;
+  onReset: () => void;
+  metrics: WeekMetric[];
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 pb-3">
+        <div className="space-y-1">
+          <CardTitle className="text-sm">工期</CardTitle>
+          <CardDescription className="text-xs">{weekLabel}</CardDescription>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="outline"
+            size="icon"
+            className="size-8"
+            aria-label="Previous week"
+            onClick={() => onStep(-1)}
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 px-2 text-xs"
+            disabled={isCurrentWeek}
+            onClick={onReset}
+          >
+            This week
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="size-8"
+            aria-label="Next week"
+            onClick={() => onStep(1)}
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="p-4 pt-0">
+        <ul className="divide-y">
+          {metrics.map((metric) => (
+            <li
+              key={metric.label}
+              className="flex items-baseline justify-between gap-3 py-3 first:pt-0 last:pb-0"
+            >
+              <div className="min-w-0 space-y-0.5">
+                <p className="truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {metric.label}
+                </p>
+                <p className="truncate text-[11px] text-muted-foreground">{metric.hint}</p>
+              </div>
+              <p className="shrink-0 text-xl font-semibold tabular-nums">{metric.value}</p>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The week's scheduled and tracked hours, project by project.
+ *
+ * Each row is scaled to its own weekly estimate, so a full bar means the
+ * project got exactly the hours it asked for and the length can be read as
+ * "how far along the estimate is" rather than against another project's
+ * numbers. The muted bar is what the calendar promised, the coloured one what
+ * was actually booked, and every row carries its two durations plus the
+ * estimate it is measured against.
+ */
+function WeekLoadChart({ rows }: { rows: ProjectPlanActualRow[] }) {
+  return (
+    <Card>
+      <CardHeader className="space-y-1 pb-3">
+        <CardTitle className="text-sm">项目校准</CardTitle>
+        <CardDescription className="flex items-center gap-3 text-xs">
+          <span className="flex items-center gap-1.5">
+            <span className="h-1 w-4 rounded-full bg-muted-foreground/40" />
+            Planned
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-foreground/70" />
+            Tracked
+          </span>
+          <span className="ml-auto text-muted-foreground">of each estimate</span>
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {rows.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No project is active in this period.
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {rows.map((row) => (
+              <li key={row.projectId} className="space-y-1">
+                <div className="flex items-center gap-2 text-xs">
+                  <span
+                    className="size-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: row.color }}
+                  />
+                  <span className="truncate font-medium">{row.name}</span>
+                  <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
+                    {formatDuration(row.plannedSeconds)}
+                    <span className="mx-1">/</span>
+                    {formatDuration(row.actualSeconds)}
+                    {row.targetSeconds > 0 ? (
+                      <>
+                        <span className="mx-1">of</span>
+                        {formatDuration(row.targetSeconds)}
+                      </>
+                    ) : null}
+                  </span>
+                </div>
+                <div className="space-y-0.5">
+                  <LoadBar
+                    seconds={row.plannedSeconds}
+                    target={row.targetSeconds}
+                    className="bg-muted-foreground/40"
+                  />
+                  <LoadBar
+                    seconds={row.actualSeconds}
+                    target={row.targetSeconds}
+                    style={{ backgroundColor: row.color }}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function LoadBar({
+  seconds,
+  target,
+  className,
+  style,
+}: {
+  seconds: number;
+  target: number;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  // A full bar is the project's own estimate for the week. Projects without one
+  // get no reference line, so their bar is left unset rather than guessed at. A
+  // 2% floor keeps a sliver of time from vanishing entirely.
+  const width =
+    target > 0 && seconds > 0 ? Math.min(100, Math.max(2, (seconds / target) * 100)) : 0;
+  return (
+    <div className="h-1 overflow-hidden rounded-full bg-muted">
+      <div
+        className={cn("h-full rounded-full", className)}
+        style={{ ...style, width: `${width}%` }}
       />
     </div>
   );

@@ -216,7 +216,7 @@ function CardTimerRow({ session }: { session: TimerSession }) {
             {formatStopwatch(elapsed)}
           </p>
           <p className="text-xs text-muted-foreground">
-            {elapsed > 0 ? `${formatDuration(elapsed, { compact: true })} recorded` : "Nothing recorded yet"}
+            {elapsed > 0 ? `${formatDuration(elapsed)} recorded` : "Nothing recorded yet"}
             {isPaused ? " · resumed time will be added on top" : ""}
           </p>
 

@@ -15,14 +15,24 @@ import {
 import { cn } from "@/lib/utils";
 import { describeError, useAppStore } from "@/store/use-app-store";
 
-const COLUMNS: TaskStatus[] = ["todo", "in_progress", "done", "cancelled"];
+const COLUMNS: TaskStatus[] = ["todo", "in_progress", "done", "routine", "cancelled"];
 
 const COLUMN_ACCENT: Record<TaskStatus, string> = {
   todo: "bg-slate-400",
   in_progress: "bg-blue-500",
   done: "bg-emerald-500",
+  routine: "bg-violet-500",
   cancelled: "bg-slate-300",
 };
+
+/** The tasks of one category inside one status column. */
+interface BoardGroup {
+  key: string;
+  name: string;
+  /** Category colour, or null for the trailing "Uncategorized" bucket. */
+  color: string | null;
+  items: TaskWithStats[];
+}
 
 export function TaskBoardView({
   tasks,
@@ -48,13 +58,39 @@ export function TaskBoardView({
     [categories]
   );
 
+  // Each column is a progress stage, and inside it the cards are partitioned by
+  // category so a stage reads as "what each kind of work is doing".
   const columns = useMemo(
     () =>
-      COLUMNS.map((status) => ({
-        status,
-        items: tasks.filter((task) => task.status === status),
-      })),
-    [tasks]
+      COLUMNS.map((status) => {
+        const items = tasks.filter((task) => task.status === status);
+        const grouped = new Map<string, BoardGroup>();
+
+        for (const task of items) {
+          const category = task.category_id ? categoryById.get(task.category_id) : undefined;
+          const key = category ? category.id : "uncategorized";
+          let group = grouped.get(key);
+          if (!group) {
+            group = {
+              key,
+              name: category?.name ?? "Uncategorized",
+              color: category?.color ?? null,
+              items: [],
+            };
+            grouped.set(key, group);
+          }
+          group.items.push(task);
+        }
+
+        const groups = [...grouped.values()].sort((a, b) => {
+          if (a.color === null) return 1;
+          if (b.color === null) return -1;
+          return a.name.localeCompare(b.name);
+        });
+
+        return { status, items, groups };
+      }),
+    [tasks, categoryById]
   );
 
   const move = async (taskId: string, status: TaskStatus) => {
@@ -102,78 +138,92 @@ export function TaskBoardView({
             </span>
           </div>
 
-          <div className="space-y-2">
-            {column.items.map((task) => {
-              const category = task.category_id ? categoryById.get(task.category_id) : undefined;
-              const overdue =
-                task.due_date !== null &&
-                task.status !== "done" &&
-                task.status !== "cancelled" &&
-                new Date(task.due_date).getTime() < Date.now();
-              return (
-                <article
-                  key={task.id}
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData("text/plain", task.id);
-                    event.dataTransfer.effectAllowed = "move";
-                    setDraggingId(task.id);
-                  }}
-                  onDragEnd={() => {
-                    setDraggingId(null);
-                    setDropTarget(null);
-                  }}
-                  onClick={() => onOpenTask(task.id)}
-                  className={cn(
-                    "group cursor-pointer rounded-md border bg-background p-3 shadow-sm transition-shadow hover:shadow",
-                    draggingId === task.id && "opacity-50"
+          <div className="space-y-3">
+            {column.groups.map((group) => (
+              <div key={group.key} className="space-y-2">
+                <div className="flex items-center gap-1.5">
+                  {group.color ? (
+                    <CategoryDot color={group.color} />
+                  ) : (
+                    <span className="size-2 shrink-0 rounded-full bg-muted-foreground/40" />
                   )}
-                >
-                  <div className="flex items-start gap-1.5">
-                    <GripVertical className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/40" />
-                    <p className="min-w-0 flex-1 text-sm font-medium leading-snug">{task.title}</p>
-                  </div>
+                  <span className="truncate text-[11px] font-medium text-muted-foreground">
+                    {group.name}
+                  </span>
+                  <span className="ml-auto rounded-full bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    {group.items.length}
+                  </span>
+                </div>
+                {group.items.map((task) => {
+                  const overdue =
+                    task.due_date !== null &&
+                    task.status !== "done" &&
+                    task.status !== "cancelled" &&
+                    new Date(task.due_date).getTime() < Date.now();
+                  return (
+                    <article
+                      key={task.id}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData("text/plain", task.id);
+                        event.dataTransfer.effectAllowed = "move";
+                        setDraggingId(task.id);
+                      }}
+                      onDragEnd={() => {
+                        setDraggingId(null);
+                        setDropTarget(null);
+                      }}
+                      onClick={() => onOpenTask(task.id)}
+                      className={cn(
+                        "group cursor-pointer rounded-md border bg-background p-3 shadow-sm transition-shadow hover:shadow",
+                        draggingId === task.id && "opacity-50"
+                      )}
+                    >
+                      <div className="flex items-start gap-1.5">
+                        <GripVertical className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/40" />
+                        <p className="min-w-0 flex-1 text-sm font-medium leading-snug">
+                          {task.title}
+                        </p>
+                      </div>
 
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <TaskPriorityBadge priority={task.priority} className="text-[10px]" />
-                    {category ? (
-                      <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                        <CategoryDot color={category.color} />
-                        {category.name}
-                      </span>
-                    ) : null}
-                  </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <TaskPriorityBadge priority={task.priority} className="text-[10px]" />
+                      </div>
 
-                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                    {task.project_id ? <span>{projectName.get(task.project_id)}</span> : null}
-                    {task.due_date ? (
-                      <span className={cn("flex items-center gap-1", overdue && "text-destructive")}>
-                        <CalendarDays className="size-3" />
-                        {formatDateLabel(task.due_date, timezone)}
-                      </span>
-                    ) : null}
-                    {task.completed_at ? (
-                      <span className="flex items-center gap-1" title="Completed">
-                        <CheckCircle2 className="size-3" />
-                        {formatDateLabel(task.completed_at, timezone)}
-                      </span>
-                    ) : null}
-                    {task.actual_seconds > 0 ? (
-                      <span className="flex items-center gap-1">
-                        <Timer className="size-3" />
-                        {formatDuration(task.actual_seconds)}
-                      </span>
-                    ) : null}
-                    {task.subtask_count > 0 ? (
-                      <span className="flex items-center gap-1">
-                        <ListTree className="size-3" />
-                        {task.subtasks_done_count}/{task.subtask_count}
-                      </span>
-                    ) : null}
-                  </div>
-                </article>
-              );
-            })}
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                        {task.project_id ? <span>{projectName.get(task.project_id)}</span> : null}
+                        {task.due_date ? (
+                          <span
+                            className={cn("flex items-center gap-1", overdue && "text-destructive")}
+                          >
+                            <CalendarDays className="size-3" />
+                            {formatDateLabel(task.due_date, timezone)}
+                          </span>
+                        ) : null}
+                        {task.completed_at ? (
+                          <span className="flex items-center gap-1" title="Completed">
+                            <CheckCircle2 className="size-3" />
+                            {formatDateLabel(task.completed_at, timezone)}
+                          </span>
+                        ) : null}
+                        {task.actual_seconds > 0 ? (
+                          <span className="flex items-center gap-1">
+                            <Timer className="size-3" />
+                            {formatDuration(task.actual_seconds)}
+                          </span>
+                        ) : null}
+                        {task.subtask_count > 0 ? (
+                          <span className="flex items-center gap-1">
+                            <ListTree className="size-3" />
+                            {task.subtasks_done_count}/{task.subtask_count}
+                          </span>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ))}
             {column.items.length === 0 ? (
               <p className="rounded-md border border-dashed bg-background/60 px-3 py-6 text-center text-xs text-muted-foreground">
                 Drop tasks here

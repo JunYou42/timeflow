@@ -147,19 +147,23 @@ export function TaskFormDialog({
 
   // A task cannot be filed under a project that has already finished -- unless
   // that is where it already lives, so opening an old task keeps its link.
+  // The project list is scoped to the chosen category: pick the category first,
+  // then only its projects are offered.
   const selectedProjectId = form.watch("project_id");
+  const selectedCategoryId = form.watch("category_id");
   const status = form.watch("status");
   const projectCandidates = useMemo(() => {
     const now = Date.now();
+    const categoryId = selectedCategoryId ?? null;
     return projects
       .filter(
         (project) =>
           project.id === selectedProjectId ||
-          !project.end_date ||
-          new Date(project.end_date).getTime() > now
+          (project.category_id === categoryId &&
+            (!project.end_date || new Date(project.end_date).getTime() > now))
       )
       .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name));
-  }, [projects, selectedProjectId]);
+  }, [projects, selectedProjectId, selectedCategoryId]);
 
   const onSubmit = form.handleSubmit(async (values) => {
     setPending(true);
@@ -254,6 +258,37 @@ export function TaskFormDialog({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
+              <Label>Category</Label>
+              <Select
+                value={form.watch("category_id") ?? NONE}
+                onValueChange={(value) => {
+                  form.setValue("category_id", value === NONE ? undefined : value, {
+                    shouldDirty: true,
+                  });
+                  // The project list follows the category, so a link that no
+                  // longer belongs under the new one is cleared.
+                  form.setValue("project_id", undefined, { shouldDirty: true });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="No category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>No category</SelectItem>
+                  {categories.map((category) => (
+                    <SelectItem key={category.id} value={category.id}>
+                      <span
+                        className="mr-2 inline-block size-2 rounded-full align-middle"
+                        style={{ backgroundColor: category.color }}
+                      />
+                      {category.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
               <Label>Project</Label>
               <Select
                 value={form.watch("project_id") ?? NONE}
@@ -275,34 +310,11 @@ export function TaskFormDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Category</Label>
-              <Select
-                value={form.watch("category_id") ?? NONE}
-                onValueChange={(value) =>
-                  form.setValue("category_id", value === NONE ? undefined : value, {
-                    shouldDirty: true,
-                  })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="No category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>No category</SelectItem>
-                  {categories.map((category) => (
-                    <SelectItem key={category.id} value={category.id}>
-                      <span
-                        className="mr-2 inline-block size-2 rounded-full align-middle"
-                        style={{ backgroundColor: category.color }}
-                      />
-                      {category.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {projectCandidates.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No open project in this category.
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-2">

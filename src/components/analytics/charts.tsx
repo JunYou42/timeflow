@@ -4,86 +4,114 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   Legend,
-  Pie,
-  PieChart,
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 
-import type { CategorySlice, DailyPoint, PlannedVsActualPoint } from "@/lib/stats";
-import { formatDuration } from "@/lib/time";
+import type { CategoryEffortRow, DailyPoint, PlannedVsActualPoint } from "@/lib/stats";
 
 const AXIS_STYLE = { fontSize: 11, fill: "hsl(var(--muted-foreground))" };
 
+/** One colour per series, reused by the radar's three rings. */
+const ESTIMATE_COLOR = "#f59e0b";
+const PLAN_COLOR = "#94a3b8";
+const TRACKED_COLOR = "hsl(var(--primary))";
+
+function roundHours(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 function hours(seconds: number): number {
-  return Math.round((seconds / 3600) * 100) / 100;
+  return roundHours(seconds / 3600);
 }
 
 /* -------------------------------------------------------------------------- */
-/* Time by category (donut)                                                    */
+/* Time by category (radar)                                                    */
 /* -------------------------------------------------------------------------- */
 
-export function CategoryDonut({ data }: { data: CategorySlice[] }) {
-  const total = data.reduce((sum, slice) => sum + slice.seconds, 0);
-  if (total === 0) {
-    return <ChartEmpty label="No tracked time in this range yet." />;
-  }
+export function CategoryRadarChart({ data }: { data: CategoryEffortRow[] }) {
+  const rows = data.map((row) => ({
+    category: row.name,
+    Estimate: hours(row.estimatedSeconds),
+    Plan: hours(row.plannedSeconds),
+    Tracked: hours(row.trackedSeconds),
+  }));
+  const hasData = rows.some((row) => row.Estimate > 0 || row.Plan > 0 || row.Tracked > 0);
+  if (!hasData) return <ChartEmpty label="No estimates, plans or tracked time in this range." />;
+
+  // Each axis's 100% is the estimate of that category, so the estimate ring is
+  // always at the rim and plan/tracked are read as "how much of the estimate
+  // was planned / tracked". Categories without an estimate fall back to their
+  // largest plan/tracked figure so the point still has room to be drawn.
+  const points = rows.map((row) => {
+    const axisMax = row.Estimate > 0 ? row.Estimate : Math.max(row.Plan, row.Tracked, 1);
+    return {
+      category: row.category,
+      axisMax,
+      Estimate: row.Estimate / axisMax,
+      Plan: row.Plan / axisMax,
+      Tracked: row.Tracked / axisMax,
+    };
+  });
+
   return (
-    <div className="relative h-[260px] w-full">
+    <div className="h-[300px] w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            dataKey="seconds"
-            nameKey="name"
-            innerRadius={62}
-            outerRadius={92}
-            paddingAngle={2}
-            strokeWidth={0}
-          >
-            {data.map((slice) => (
-              <Cell key={slice.categoryId} fill={slice.color} />
-            ))}
-          </Pie>
+        <RadarChart data={points} outerRadius="70%">
+          <PolarGrid stroke="hsl(var(--border))" />
+          <PolarAngleAxis dataKey="category" tick={AXIS_STYLE} />
+          {/* Every axis is drawn full at 1, so the ticks read as percentages of
+              that category's estimate rather than as hours. */}
+          <PolarRadiusAxis
+            domain={[0, 1]}
+            tickCount={5}
+            tickFormatter={(value: number) => `${Math.round(value * 100)}%`}
+            tick={AXIS_STYLE}
+            axisLine={false}
+          />
           <Tooltip
-            formatter={(value: number, name: string) => [formatDuration(value), name]}
+            formatter={(value: number, name: string, item) => {
+              const axisMax =
+                (item as { payload?: { axisMax?: number } } | undefined)?.payload?.axisMax ?? 1;
+              return [`${roundHours(value * axisMax)}h`, name];
+            }}
             contentStyle={{ borderRadius: 8, fontSize: 12 }}
           />
-        </PieChart>
-      </ResponsiveContainer>
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-lg font-semibold tabular-nums">{formatDuration(total)}</span>
-        <span className="text-xs text-muted-foreground">total tracked</span>
-      </div>
-    </div>
-  );
-}
-
-export function CategoryLegend({ data }: { data: CategorySlice[] }) {
-  const total = data.reduce((sum, slice) => sum + slice.seconds, 0);
-  if (total === 0) return null;
-  return (
-    <ul className="space-y-2">
-      {data.map((slice) => (
-        <li key={slice.categoryId} className="flex items-center gap-2 text-sm">
-          <span
-            className="size-2.5 shrink-0 rounded-full"
-            style={{ backgroundColor: slice.color }}
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          {/* Estimate is the widest reference ring; tracked is the one to read
+              against it, so it is drawn last and sits on top. */}
+          <Radar
+            name="Estimate"
+            dataKey="Estimate"
+            stroke={ESTIMATE_COLOR}
+            fill={ESTIMATE_COLOR}
+            fillOpacity={0.12}
           />
-          <span className="truncate">{slice.name}</span>
-          <span className="ml-auto tabular-nums text-muted-foreground">
-            {formatDuration(slice.seconds)}
-          </span>
-          <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">
-            {slice.percentage}%
-          </span>
-        </li>
-      ))}
-    </ul>
+          <Radar
+            name="Plan"
+            dataKey="Plan"
+            stroke={PLAN_COLOR}
+            fill={PLAN_COLOR}
+            fillOpacity={0.16}
+          />
+          <Radar
+            name="Tracked"
+            dataKey="Tracked"
+            stroke={TRACKED_COLOR}
+            fill={TRACKED_COLOR}
+            fillOpacity={0.24}
+          />
+        </RadarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 

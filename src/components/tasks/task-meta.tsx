@@ -10,6 +10,7 @@ import {
 const STATUS_CLASSES: Record<TaskStatus, string> = {
   todo: "border-transparent bg-slate-100 text-slate-700",
   in_progress: "border-transparent bg-blue-100 text-blue-700",
+  routine: "border-transparent bg-violet-100 text-violet-700",
   done: "border-transparent bg-emerald-100 text-emerald-700",
   cancelled: "border-transparent bg-muted text-muted-foreground",
 };

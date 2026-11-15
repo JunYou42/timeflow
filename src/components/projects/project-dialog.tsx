@@ -175,6 +175,10 @@ export function ProjectDialog({
                 onChange={(event) => setEstimatedHours(event.target.value)}
                 placeholder="e.g. 1.5"
               />
+              <p className="text-xs text-muted-foreground">
+                With no end date, this is the hours per week; with an end date, the total for the
+                whole project.
+              </p>
             </div>
           </div>
 
@@ -224,12 +228,27 @@ export function ProjectDialog({
             </div>
             <div className="space-y-2">
               <Label htmlFor="project-end">Ends</Label>
-              <Input
-                id="project-end"
-                type="datetime-local"
-                value={endDate}
-                onChange={(event) => setEndDate(event.target.value)}
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  id="project-end"
+                  type="datetime-local"
+                  className="min-w-0 flex-1"
+                  value={endDate}
+                  onChange={(event) => setEndDate(event.target.value)}
+                />
+                {/* An empty end date is meaningful -- the project is ongoing --
+                    so it has to be reachable again once one is picked. */}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 shrink-0 text-xs text-muted-foreground"
+                  disabled={!endDate}
+                  onClick={() => setEndDate("")}
+                >
+                  Clear
+                </Button>
+              </div>
             </div>
           </div>
 

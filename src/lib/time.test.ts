@@ -6,6 +6,7 @@ import {
   dayKey,
   durationBetween,
   enumerateDayKeys,
+  formatCalendarRangeTitle,
   formatDuration,
   formatStopwatch,
   freezeTimerSegment,
@@ -114,6 +115,40 @@ describe("resolveRange", () => {
   });
 });
 
+describe("formatCalendarRangeTitle", () => {
+  const reference = "2026-11-11T03:20:00.000Z";
+
+  it("names the month from the view's current range", () => {
+    // 1 Nov – 1 Dec local time. The month grid *displays* Mon 26 Oct – Sun 6
+    // Dec, which would name October, so the current range is what counts.
+    const range = resolveRange("month", SHANGHAI, reference);
+    expect(formatCalendarRangeTitle(range.start, range.end, SHANGHAI, "dayGridMonth")).toBe(
+      "November 2026"
+    );
+  });
+
+  it("spans Monday to Sunday for the week view", () => {
+    const range = resolveRange("week", SHANGHAI, reference);
+    expect(formatCalendarRangeTitle(range.start, range.end, SHANGHAI, "timeGridWeek")).toBe(
+      "Nov 9 – 15, 2026"
+    );
+  });
+
+  it("names both months when the week crosses one", () => {
+    const range = resolveRange("week", SHANGHAI, "2026-12-02T03:20:00.000Z");
+    expect(formatCalendarRangeTitle(range.start, range.end, SHANGHAI, "timeGridWeek")).toBe(
+      "Nov 30 – Dec 6, 2026"
+    );
+  });
+
+  it("shows a single day for the day view", () => {
+    const range = resolveRange("today", SHANGHAI, reference);
+    expect(formatCalendarRangeTitle(range.start, range.end, SHANGHAI, "timeGridDay")).toBe(
+      "Nov 11, 2026"
+    );
+  });
+});
+
 describe("enumerateDayKeys", () => {
   it("lists one key per day in the range", () => {
     const range = resolveRange("custom", "UTC", "2026-11-11T00:00:00.000Z", {
@@ -135,7 +170,7 @@ describe("duration helpers", () => {
     expect(formatDuration(45)).toBe("45s");
     expect(formatDuration(600)).toBe("10m");
     expect(formatDuration(5400)).toBe("1h 30m");
-    expect(formatDuration(7200, { compact: true })).toBe("2h");
+    expect(formatDuration(7200)).toBe("2h");
   });
 
   it("formats a stopwatch with padded units", () => {

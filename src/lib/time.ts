@@ -218,17 +218,14 @@ export function enumerateDayKeys(range: DateRange, timezone: string): string[] {
 /* Formatting                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/** "2h 15m", "45m", "30s" -- compact human readable duration. */
-export function formatDuration(totalSeconds: number, options?: { compact?: boolean }): string {
+/** "2h 15m", "2h", "45m", "30s" -- compact human readable duration. Whole hours drop the minutes. */
+export function formatDuration(totalSeconds: number): string {
   const safe = Math.max(0, Math.floor(totalSeconds || 0));
   const hours = Math.floor(safe / 3600);
   const minutes = Math.floor((safe % 3600) / 60);
   const seconds = safe % 60;
 
-  if (hours > 0) {
-    if (options?.compact && minutes === 0) return `${hours}h`;
-    return `${hours}h ${minutes}m`;
-  }
+  if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
   if (minutes > 0) return `${minutes}m`;
   return `${seconds}s`;
 }
@@ -304,6 +301,47 @@ export function freezeTimerSegment(
 
 export function formatDateLabel(instant: Date | string, timezone: string): string {
   return formatInTimezone(instant, timezone, "EEE, MMM d, yyyy");
+}
+
+/**
+ * Title for a calendar view, built from the view's *current* range rather than
+ * its visible range: the visible range of the month view covers the padding
+ * days of the neighbouring months, which would name the wrong month.
+ *
+ * Mirrors FullCalendar's own formatting: a single day for the day view, a
+ * month name for the month view, and "Nov 9 – 15, 2026" / "Nov 30 – Dec 6,
+ * 2026" for the week view depending on whether the week crosses a month.
+ */
+export function formatCalendarRangeTitle(
+  start: Date,
+  end: Date,
+  timezone: string,
+  viewType: string
+): string {
+  if (viewType === "dayGridMonth") {
+    return formatInTimezone(start, timezone, "MMMM yyyy");
+  }
+  if (viewType === "timeGridDay") {
+    return formatInTimezone(start, timezone, "MMM d, yyyy");
+  }
+  // Week view: `end` is the first instant of the next week, so the last day is
+  // one millisecond before it.
+  const last = new Date(end.getTime() - 1);
+  const startMonth = formatInTimezone(start, timezone, "MMM");
+  const endMonth = formatInTimezone(last, timezone, "MMM");
+  const year = formatInTimezone(last, timezone, "yyyy");
+  if (startMonth === endMonth) {
+    return `${startMonth} ${formatInTimezone(start, timezone, "d")} – ${formatInTimezone(
+      last,
+      timezone,
+      "d"
+    )}, ${year}`;
+  }
+  return `${startMonth} ${formatInTimezone(start, timezone, "d")} – ${endMonth} ${formatInTimezone(
+    last,
+    timezone,
+    "d"
+  )}, ${year}`;
 }
 
 export function formatTimeLabel(instant: Date | string, timezone: string): string {

@@ -63,7 +63,7 @@ export function TasksWorkspace() {
 
   const timezone = useUserTimezone();
 
-  const [view, setView] = useState<ViewMode>("table");
+  const [view, setView] = useState<ViewMode>("board");
   const [query, setQuery] = useState("");
   const [period, setPeriod] = useState<PeriodKey>("week");
   const [status, setStatus] = useState<string>(ALL);
@@ -233,14 +233,14 @@ export function TasksWorkspace() {
         </div>
 
         <div className="ml-auto flex items-center gap-1 rounded-md border p-0.5">
-          <ViewButton active={view === "table"} onClick={() => setView("table")} label="Table view">
-            <Rows3 className="size-4" />
-          </ViewButton>
           <ViewButton active={view === "board"} onClick={() => setView("board")} label="Board view">
             <KanbanSquare className="size-4" />
           </ViewButton>
           <ViewButton active={view === "list"} onClick={() => setView("list")} label="List view">
             <List className="size-4" />
+          </ViewButton>
+          <ViewButton active={view === "table"} onClick={() => setView("table")} label="Table view">
+            <Rows3 className="size-4" />
           </ViewButton>
         </div>
       </div>

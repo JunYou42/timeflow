@@ -98,8 +98,8 @@ export function PlanActualByCategory({ groups, rangeLabel }: PlanActualByCategor
               const innerOffsets = hasPlan ? plan : innerValues;
               const outer = ringDashes(plan, plan, OUTER_RADIUS);
               const inner = ringDashes(innerValues, innerOffsets, INNER_RADIUS);
-              const over =
-                group.plannedSeconds > 0 && group.actualSeconds > group.plannedSeconds;
+              const met =
+                group.plannedSeconds > 0 && group.actualSeconds >= group.plannedSeconds;
               const adherence =
                 group.plannedSeconds > 0
                   ? `${Math.round((group.actualSeconds / group.plannedSeconds) * 100)}%`
@@ -143,16 +143,15 @@ export function PlanActualByCategory({ groups, rangeLabel }: PlanActualByCategor
                         )
                       )}
                     </svg>
-                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                       <span
                         className={cn(
                           "text-xs font-semibold tabular-nums",
-                          over && "text-destructive"
+                          met && "text-emerald-600"
                         )}
                       >
                         {adherence}
                       </span>
-                      <span className="text-[10px] text-muted-foreground">of plan</span>
                     </div>
                   </div>
 

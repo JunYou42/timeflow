@@ -15,13 +15,13 @@ export type ISODateTime = string;
 /* Enums                                                                       */
 /* -------------------------------------------------------------------------- */
 
-export type TaskStatus = "todo" | "in_progress" | "done" | "cancelled";
+export type TaskStatus = "todo" | "in_progress" | "done" | "routine" | "cancelled";
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
 export type ScheduleType = "task" | "event";
 export type TimeEntrySource = "timer" | "manual";
 export type TimerStatus = "running" | "paused" | "stopped";
 
-export const TASK_STATUSES: TaskStatus[] = ["todo", "in_progress", "done", "cancelled"];
+export const TASK_STATUSES: TaskStatus[] = ["todo", "in_progress", "done", "routine", "cancelled"];
 export const TASK_PRIORITIES: TaskPriority[] = ["low", "medium", "high", "urgent"];
 export const SCHEDULE_TYPES: ScheduleType[] = ["task", "event"];
 
@@ -29,6 +29,7 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   todo: "Todo",
   in_progress: "In Progress",
   done: "Done",
+  routine: "Routine",
   cancelled: "Cancelled",
 };
 

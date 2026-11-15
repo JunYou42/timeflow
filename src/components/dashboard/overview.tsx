@@ -65,7 +65,11 @@ export function Overview() {
   const openTasks = useMemo(
     () =>
       tasks
-        .filter((task) => !task.deleted_at && (task.status === "todo" || task.status === "in_progress"))
+        .filter(
+          (task) =>
+            !task.deleted_at &&
+            (task.status === "todo" || task.status === "in_progress" || task.status === "routine")
+        )
         .sort((a, b) => {
           const aDue = a.due_date ? new Date(a.due_date).getTime() : Number.MAX_SAFE_INTEGER;
           const bDue = b.due_date ? new Date(b.due_date).getTime() : Number.MAX_SAFE_INTEGER;
