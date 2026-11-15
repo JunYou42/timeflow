@@ -102,47 +102,8 @@ export function Overview() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Tracked today"
-          value={formatDuration(todaySeconds)}
-          hint={`${timeEntries.length} entries in total`}
-          icon={Timer}
-        />
-        <StatCard
-          label="This week"
-          value={formatDuration(weekSeconds)}
-          hint="Week starts Monday"
-          icon={TrendingUp}
-        />
-        <StatCard
-          label="Open tasks"
-          value={String(completion.pending)}
-          hint={`${completion.completed} completed`}
-          icon={CircleDashed}
-        />
-        <StatCard
-          label="Overdue"
-          value={String(completion.overdue)}
-          hint={completion.overdue > 0 ? "Needs attention" : "All clear"}
-          icon={TriangleAlert}
-        />
-      </div>
-
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
-          <Card>
-            <CardHeader className="flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base">Last 14 days</CardTitle>
-              <Button asChild variant="ghost" size="sm">
-                <Link href="/analytics">View analytics</Link>
-              </Button>
-            </CardHeader>
-            <CardContent>
-              <DailyTrendChart data={trend} />
-            </CardContent>
-          </Card>
-
           <Card>
             <CardHeader className="flex-row items-center justify-between space-y-0">
               <CardTitle className="flex items-center gap-2 text-base">
@@ -211,6 +172,45 @@ export function Overview() {
           </Card>
         </div>
       </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Tracked today"
+          value={formatDuration(todaySeconds)}
+          hint={`${timeEntries.length} entries in total`}
+          icon={Timer}
+        />
+        <StatCard
+          label="This week"
+          value={formatDuration(weekSeconds)}
+          hint="Week starts Monday"
+          icon={TrendingUp}
+        />
+        <StatCard
+          label="Open tasks"
+          value={String(completion.pending)}
+          hint={`${completion.completed} completed`}
+          icon={CircleDashed}
+        />
+        <StatCard
+          label="Overdue"
+          value={String(completion.overdue)}
+          hint={completion.overdue > 0 ? "Needs attention" : "All clear"}
+          icon={TriangleAlert}
+        />
+      </div>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base">Last 14 days</CardTitle>
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/analytics">View analytics</Link>
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <DailyTrendChart data={trend} />
+        </CardContent>
+      </Card>
 
       <TaskFormDialog open={taskDialogOpen} onOpenChange={setTaskDialogOpen} />
       <TimeEntryDialog open={entryDialogOpen} onOpenChange={setEntryDialogOpen} />
